@@ -1,10 +1,6 @@
 package cs6650.skierservlet;
 
 import com.google.gson.Gson;
-import com.rabbitmq.client.Channel;
-import com.rabbitmq.client.Connection;
-import com.rabbitmq.client.ConnectionFactory;
-
 import javax.servlet.ServletException;
 import javax.servlet.annotation.WebServlet;
 import javax.servlet.http.HttpServlet;
@@ -13,22 +9,14 @@ import javax.servlet.http.HttpServletResponse;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.PrintWriter;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeoutException;
+import java.util.concurrent.CompletableFuture;
 import java.util.regex.Pattern;
 import java.util.regex.Matcher;
 
 @WebServlet(value = "/skiers/*", loadOnStartup = 1)
 public class SkierServlet extends HttpServlet {
-    private static final String QUEUE_NAME = "lift_ride_queue";
-    private static final String RABBITMQ_HOST = "172.31.20.160";
-    private static final int THREAD_POOL_SIZE = 32; // Adjust based on your server capacity
-
     private final Gson gson = new Gson();
-    private ConnectionFactory factory;
-    private Connection connection;
-    private ExecutorService executorService;
+    private MessageQueueService messageQueueService;
 
     // URL validation pattern - matches /skiers/{resortID}/seasons/{seasonID}/days/{dayID}/skiers/{skierID}
     private static final Pattern SKIER_URL_PATTERN =
@@ -39,30 +27,14 @@ public class SkierServlet extends HttpServlet {
         super.init();
         System.out.println("SkierServlet initializing");
 
-        // Initialize RabbitMQ connection factory
-        factory = new ConnectionFactory();
-        factory.setHost(RABBITMQ_HOST);
-        factory.setPort(5672);
-        factory.setUsername("myuser");         // Replace with your RabbitMQ username
-        factory.setPassword("mypassword");     // Replace with your RabbitMQ password
-
-        // Initialize thread pool for async message publishing
-        executorService = Executors.newFixedThreadPool(THREAD_POOL_SIZE);
-
         try {
-            // Establish the connection once during initialization
-            connection = factory.newConnection();
-            System.out.println("Connected to RabbitMQ successfully");
-
-            // Create a channel to declare the queue
-            try (Channel channel = connection.createChannel()) {
-                // Declare a durable queue (survives broker restarts)
-                channel.queueDeclare(QUEUE_NAME, true, false, false, null);
-            }
-        } catch (IOException | TimeoutException e) {
-            System.err.println("Failed to connect to RabbitMQ: " + e.getMessage());
+            // Initialize the message queue service - single responsibility
+            messageQueueService = new RabbitMQService();
+            messageQueueService.initialize();
+        } catch (Exception e) {
+            System.err.println("Failed to initialize message queue service: " + e.getMessage());
             e.printStackTrace();
-            throw new ServletException("Failed to initialize RabbitMQ connection", e);
+            throw new ServletException("Failed to initialize message queue service", e);
         }
     }
 
@@ -120,13 +92,22 @@ public class SkierServlet extends HttpServlet {
                 return;
             }
 
-            // 5. Send to queue asynchronously
+            // 5. Send to queue and wait for result
             final String message = gson.toJson(liftRide);
-            executorService.submit(() -> sendToQueue(message));
+            CompletableFuture<Boolean> future = messageQueueService.sendMessage(message);
 
-            // 6. Return success to client immediately
-            res.setStatus(HttpServletResponse.SC_CREATED);
-            out.println("{\"message\": \"Lift ride recorded successfully\"}");
+            // Wait for the send operation to complete and check result
+            boolean sendSuccess = future.join();
+
+            if (sendSuccess) {
+                // 6. Return success to client
+                res.setStatus(HttpServletResponse.SC_CREATED);
+                out.println("{\"message\": \"Lift ride recorded successfully\"}");
+            } else {
+                // Return error if sending to queue failed
+                sendErrorResponse(res, HttpServletResponse.SC_SERVICE_UNAVAILABLE,
+                        "Unable to process lift ride data. Please try again later.");
+            }
 
         } catch (NumberFormatException e) {
             sendErrorResponse(res, HttpServletResponse.SC_BAD_REQUEST, "Invalid numeric parameters");
@@ -144,30 +125,12 @@ public class SkierServlet extends HttpServlet {
         out.println("{\"message\": \"" + message + "\"}");
     }
 
-    private void sendToQueue(String message) {
-        try (Channel channel = connection.createChannel()) {
-            channel.basicPublish("", QUEUE_NAME, null, message.getBytes());
-        } catch (Exception e) {
-            System.err.println("Failed to send message to queue: " + e.getMessage());
-            e.printStackTrace();
-        }
-    }
-
     @Override
     public void destroy() {
         // Clean up resources
-        if (executorService != null) {
-            executorService.shutdown();
+        if (messageQueueService != null) {
+            messageQueueService.shutdown();
         }
-
-        try {
-            if (connection != null && connection.isOpen()) {
-                connection.close();
-            }
-        } catch (IOException e) {
-            System.err.println("Error closing RabbitMQ connection: " + e.getMessage());
-        }
-
         super.destroy();
     }
 
