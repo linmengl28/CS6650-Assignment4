@@ -75,7 +75,7 @@ The `SkierRides` table stores information about individual lift rides taken by s
   "time": 157832,
   "vertical": 70
 }
-
+```
 
 ## Deployment Topology
 
