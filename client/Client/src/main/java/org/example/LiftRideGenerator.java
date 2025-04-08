@@ -41,7 +41,7 @@ public class LiftRideGenerator implements Runnable {
         // Create a complete event with all fields
         LiftRideEvent fullEvent = new LiftRideEvent(
                 random.nextInt(100000) + 1,  // skierID
-                random.nextInt(10) + 1,      // resortID
+                1,                           // resortID
                 random.nextInt(40) + 1,      // liftID
                 "2025",                      // seasonID
                 1,                           // dayID

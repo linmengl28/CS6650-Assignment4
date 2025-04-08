@@ -19,10 +19,11 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 class RabbitMQService implements MessageQueueService {
     private static final String QUEUE_NAME = "lift_ride_queue";
-    private static final String RABBITMQ_HOST = "172.31.20.160";
-    private static final int POOL_SIZE = 32; // Number of channels to create in the pool
-    private static final int THREAD_POOL_SIZE = 16; // Thread pool for async operations
-
+    private static final String RABBITMQ_HOST = "172.31.44.71";
+    private static final int POOL_SIZE = 8; // Number of channels to create in the pool
+    private static final int THREAD_POOL_SIZE = 8; // Thread pool for async operations
+    private static final String username = "admin";
+    private static final String pswd = "admin";
     private ConnectionFactory factory;
     private Connection connection;
     private ExecutorService executorService;
@@ -42,8 +43,8 @@ class RabbitMQService implements MessageQueueService {
         factory = new ConnectionFactory();
         factory.setHost(RABBITMQ_HOST);
         factory.setPort(5672);
-        factory.setUsername("myuser");
-        factory.setPassword("mypassword");
+        factory.setUsername(username);
+        factory.setPassword(pswd);
 
         // Create thread pool for async operations
         executorService = Executors.newFixedThreadPool(THREAD_POOL_SIZE);

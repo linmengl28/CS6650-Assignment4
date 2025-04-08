@@ -72,10 +72,10 @@ public class LiftRideEvent {
 
     public boolean isValid() {
         return skierID >= 1 && skierID <= 100000 &&
-                resortID >= 1 && resortID <= 10 &&
+                resortID == 1 &&
                 liftID >= 1 && liftID <= 40 &&
                 "2025".equals(seasonID) &&
-                dayID == 1 &&
+                (dayID == 1 || dayID == 2 || dayID == 3) &&  // Modified to accept days 1, 2, or 3
                 time >= 1 && time <= 360;
     }
 }

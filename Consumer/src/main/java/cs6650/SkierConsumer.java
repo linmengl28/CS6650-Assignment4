@@ -24,9 +24,18 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class SkierConsumer {
     private static final String QUEUE_NAME = "lift_ride_queue";
-    private static final String RABBITMQ_HOST = "172.31.20.160";
-    private static final int NUM_THREADS = 512;
-    private static final int PREFETCH_COUNT = 250;
+    private static final String RABBITMQ_HOST = "172.31.44.71";
+    private static final String RMQusername = "admin";
+    private static final String RMQpswd = "admin";
+
+    // Optimized thread count - can be adjusted based on CPU cores
+    private static final int NUM_THREADS = 1024; // Increased from 512
+
+    // Significantly increased prefetch count for better throughput
+    private static final int PREFETCH_COUNT = 1000; // Up from 500
+
+    // Channel pool configuration - increased
+    private static final int CHANNEL_POOL_SIZE = 128; // Up from 64
 
     // DynamoDB table name
     private static final String SKIER_RIDES_TABLE = "SkierRides";
@@ -38,8 +47,8 @@ public class SkierConsumer {
     private static DynamoDbAsyncClient dynamoDbAsyncClient;
     private static DynamoDbClient dynamoDbClient;
 
-    // Batch writer for DynamoDB
-    private static final BatchWriter batchWriter = new BatchWriter();
+    // Batch writer for DynamoDB with optimized settings
+    private static BatchWriter batchWriter;
 
     // Counters for statistics
     private static final AtomicInteger messagesProcessed = new AtomicInteger(0);
@@ -50,6 +59,16 @@ public class SkierConsumer {
     // Flag to control application lifecycle
     private static final AtomicBoolean isRunning = new AtomicBoolean(true);
 
+    // Optimized LRU cache for deduplication - increased size
+    private static final int CACHE_SIZE = 10000; // Up from 1000
+    private static final Map<String, Long> recentWrites = new ConcurrentHashMap<>(CACHE_SIZE);
+
+    // Thread-local GSON instances for better performance
+    private static final ThreadLocal<Gson> gsonThreadLocal = ThreadLocal.withInitial(Gson::new);
+
+    // Optimized connection management
+    private static Connection connection;
+
     public static void main(String[] args) {
         System.out.println("Starting SkierConsumer with DynamoDB persistence...");
 
@@ -57,6 +76,13 @@ public class SkierConsumer {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             System.out.println("Shutdown hook triggered - gracefully terminating...");
             isRunning.set(false);
+
+            try {
+                // Allow some time for shutdown procedures
+                Thread.sleep(5000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
         }));
 
         // Initialize DynamoDB clients
@@ -65,30 +91,58 @@ public class SkierConsumer {
         // Ensure table exists (or create it)
         createTablesIfNotExist();
 
-        // Start the batch writer
+        // Initialize the batch writer with optimized settings
+        batchWriter = new BatchWriter();
         batchWriter.start();
 
         ConnectionFactory factory = new ConnectionFactory();
         factory.setHost(RABBITMQ_HOST);
         factory.setPort(5672);
-        factory.setUsername("myuser");
-        factory.setPassword("mypassword");
+        factory.setUsername(RMQusername);
+        factory.setPassword(RMQpswd);
 
         // Configure RabbitMQ connection factory for better performance
         factory.setAutomaticRecoveryEnabled(true);
         factory.setNetworkRecoveryInterval(1000);
         factory.setRequestedHeartbeat(30);
-        factory.setConnectionTimeout(5000);
+        factory.setConnectionTimeout(30000); // Increased from 15000 to 30000ms
         factory.setRequestedChannelMax(0); // Unlimited channels
 
-        // Create a thread pool for consumers
-        ExecutorService executorService = Executors.newFixedThreadPool(NUM_THREADS);
+        // Set higher thread pool size for RabbitMQ connection
+        factory.setSharedExecutor(Executors.newFixedThreadPool(CHANNEL_POOL_SIZE));
+
+        // Set larger frame size for better throughput
+        factory.setRequestedFrameMax(131072); // 128KB frame size
+
+        // Create thread pools
+        ExecutorService consumerExecutor = Executors.newFixedThreadPool(NUM_THREADS,
+                r -> {
+                    Thread t = new Thread(r);
+                    t.setDaemon(true); // Make threads daemon
+                    return t;
+                });
         ScheduledExecutorService statsExecutor = null;
 
         try {
-            // Create a single shared connection
-            Connection connection = factory.newConnection();
+            // Create a single shared connection with optimized thread pool
+            connection = factory.newConnection(
+                    Executors.newFixedThreadPool(CHANNEL_POOL_SIZE, r -> {
+                        Thread t = new Thread(r);
+                        t.setDaemon(true);
+                        return t;
+                    })
+            );
             System.out.println("Connected to RabbitMQ successfully");
+
+            // Initialize channel pool with larger size
+            BlockingQueue<Channel> channelPool = new LinkedBlockingQueue<>(CHANNEL_POOL_SIZE);
+            for (int i = 0; i < CHANNEL_POOL_SIZE; i++) {
+                Channel channel = connection.createChannel();
+                channel.queueDeclare(QUEUE_NAME, true, false, false, null);
+                channel.basicQos(PREFETCH_COUNT);
+                channelPool.offer(channel);
+            }
+            System.out.println("Created channel pool with " + CHANNEL_POOL_SIZE + " channels");
 
             // Test queue connection and check message count
             try (Channel testChannel = connection.createChannel()) {
@@ -98,19 +152,22 @@ public class SkierConsumer {
                 System.err.println("Error testing RabbitMQ queue: " + e.getMessage());
             }
 
-            // Start statistics reporter thread
+            // Start statistics reporter thread with more frequent updates
             statsExecutor = startStatsReporter();
 
-            // Create multiple consumer threads
-            CountDownLatch threadCompletionLatch = new CountDownLatch(1); // Will never count down in normal operation
-
+            // Create multiple consumer threads - each with its own channel
             for (int i = 0; i < NUM_THREADS; i++) {
                 final int threadId = i;
-                executorService.submit(() -> {
+                consumerExecutor.submit(() -> {
                     try {
-                        consumeMessages(connection, threadId);
+                        // Each consumer gets its own channel for better parallelism
+                        Channel channel = connection.createChannel();
+                        channel.queueDeclare(QUEUE_NAME, true, false, false, null);
+                        channel.basicQos(PREFETCH_COUNT);
+
+                        consumeMessages(channel, threadId);
                     } catch (Exception e) {
-                        // Minimal error logging, just report the class name
+                        // Minimal error logging
                         System.err.println("Thread " + threadId + " failed: " + e.getClass().getName());
                     }
                 });
@@ -118,11 +175,14 @@ public class SkierConsumer {
 
             System.out.println("All consumer threads started. Running indefinitely until termination signal...");
 
-            // Wait indefinitely - the application will run until Ctrl+C is pressed
-            threadCompletionLatch.await();
+            // Wait until shutdown is requested
+            while (isRunning.get()) {
+                Thread.sleep(1000);
+            }
 
         } catch (Exception e) {
             System.err.println("Failed to start consumer: " + e.getMessage());
+            e.printStackTrace();
         } finally {
             System.out.println("Main thread reaching finally block - program is shutting down");
 
@@ -133,14 +193,14 @@ public class SkierConsumer {
 
             // Graceful shutdown
             isRunning.set(false);
-            executorService.shutdown();
+            consumerExecutor.shutdown();
 
             try {
-                if (!executorService.awaitTermination(10, TimeUnit.SECONDS)) {
-                    executorService.shutdownNow();
+                if (!consumerExecutor.awaitTermination(10, TimeUnit.SECONDS)) {
+                    consumerExecutor.shutdownNow();
                 }
             } catch (InterruptedException ie) {
-                executorService.shutdownNow();
+                consumerExecutor.shutdownNow();
                 Thread.currentThread().interrupt();
             }
 
@@ -148,10 +208,13 @@ public class SkierConsumer {
             System.out.println("Shutting down - waiting for batch writer to complete...");
             batchWriter.shutdown();
 
+            // Close RabbitMQ connection
             try {
-                Thread.sleep(5000);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+                if (connection != null && connection.isOpen()) {
+                    connection.close(5000); // 5 second timeout
+                }
+            } catch (Exception e) {
+                System.err.println("Error closing RabbitMQ connection: " + e.getMessage());
             }
 
             // Close DynamoDB clients last
@@ -169,15 +232,15 @@ public class SkierConsumer {
             // Configure HTTP client with optimized settings
             NettyNioAsyncHttpClient.Builder asyncHttpClientBuilder = NettyNioAsyncHttpClient.builder()
                     .connectionTimeout(Duration.ofSeconds(5))
-                    .maxConcurrency(250)
+                    .maxConcurrency(NUM_THREADS) // Match with consumer thread count
                     .connectionAcquisitionTimeout(Duration.ofSeconds(10))
-                    .connectionTimeToLive(Duration.ofMinutes(10));
+                    .connectionTimeToLive(Duration.ofMinutes(30)); // Increased from 10 to 30 mins
 
             ApacheHttpClient.Builder syncHttpClientBuilder = ApacheHttpClient.builder()
                     .connectionTimeout(Duration.ofSeconds(5))
                     .socketTimeout(Duration.ofSeconds(30))
-                    .connectionTimeToLive(Duration.ofMinutes(10))
-                    .maxConnections(250);
+                    .connectionTimeToLive(Duration.ofMinutes(30)) // Increased from 10 to 30 mins
+                    .maxConnections(NUM_THREADS); // Match with consumer thread count
 
             // When using IAM Role attached to EC2, no explicit credentials are needed
             dynamoDbAsyncClient = DynamoDbAsyncClient.builder()
@@ -207,7 +270,7 @@ public class SkierConsumer {
                         .build());
                 System.out.println(SKIER_RIDES_TABLE + " table already exists");
             } catch (ResourceNotFoundException e) {
-                // Create SkierRides table with provisioned capacity and GSIs
+                // Create SkierRides table with high provisioned capacity
                 CreateTableRequest createSkierRidesTable = CreateTableRequest.builder()
                         .tableName(SKIER_RIDES_TABLE)
                         .keySchema(
@@ -220,8 +283,8 @@ public class SkierConsumer {
                                 AttributeDefinition.builder().attributeName("dayId").attributeType(ScalarAttributeType.N).build())
                         .billingMode(BillingMode.PROVISIONED)
                         .provisionedThroughput(ProvisionedThroughput.builder()
-                                .readCapacityUnits(10L)
-                                .writeCapacityUnits(2000L)
+                                .readCapacityUnits(50L) // Increased from 10 to 50
+                                .writeCapacityUnits(5000L) // Increased from 2000 to 5000
                                 .build())
                         // Add GSI for resort-day queries
                         .globalSecondaryIndexes(
@@ -233,8 +296,8 @@ public class SkierConsumer {
                                         .projection(Projection.builder().projectionType(ProjectionType.INCLUDE)
                                                 .nonKeyAttributes("skierId").build())
                                         .provisionedThroughput(ProvisionedThroughput.builder()
-                                                .readCapacityUnits(20L)
-                                                .writeCapacityUnits(2000L)
+                                                .readCapacityUnits(50L) // Increased from 20 to 50
+                                                .writeCapacityUnits(5000L) // Increased from 2000 to 5000
                                                 .build())
                                         .build(),
                                 GlobalSecondaryIndex.builder()
@@ -245,8 +308,8 @@ public class SkierConsumer {
                                         .projection(Projection.builder().projectionType(ProjectionType.INCLUDE)
                                                 .nonKeyAttributes("vertical", "liftId").build())
                                         .provisionedThroughput(ProvisionedThroughput.builder()
-                                                .readCapacityUnits(20L)
-                                                .writeCapacityUnits(2000L)
+                                                .readCapacityUnits(50L) // Increased from 20 to 50
+                                                .writeCapacityUnits(5000L) // Increased from 2000 to 5000
                                                 .build())
                                         .build())
                         .build();
@@ -275,19 +338,11 @@ public class SkierConsumer {
         }
     }
 
-    private static void consumeMessages(Connection connection, int threadId) throws IOException {
-        Gson gson = new Gson();
+    private static void consumeMessages(Channel channel, int threadId) throws IOException {
+        // Get thread-local Gson instance for better performance
+        Gson gson = gsonThreadLocal.get();
 
-        // Create a channel for each consumer thread
-        Channel channel = connection.createChannel();
-
-        // Declare the queue (to ensure it exists)
-        channel.queueDeclare(QUEUE_NAME, true, false, false, null);
-
-        // Set prefetch count - how many messages the server will deliver before requiring acknowledgements
-        channel.basicQos(PREFETCH_COUNT);
-
-        // Define message handling callback
+        // Define message handling callback with multi-ack capability
         DeliverCallback deliverCallback = (consumerTag, delivery) -> {
             if (!isRunning.get()) {
                 return;
@@ -309,7 +364,14 @@ public class SkierConsumer {
 
             } catch (Exception e) {
                 processingErrors.incrementAndGet();
-                channel.basicNack(delivery.getEnvelope().getDeliveryTag(), false, true);
+                try {
+                    // Requeue only on specific exceptions that might be temporary
+                    boolean requeue = !(e instanceof IllegalArgumentException);
+                    channel.basicNack(delivery.getEnvelope().getDeliveryTag(), false, requeue);
+                } catch (IOException ioe) {
+                    // Handle channel errors - minimal logging
+                    System.err.println("Error NACKing message on thread " + threadId);
+                }
             }
         };
 
@@ -319,7 +381,7 @@ public class SkierConsumer {
         // Keep thread alive until shutdown is requested
         while (isRunning.get()) {
             try {
-                Thread.sleep(1000);
+                Thread.sleep(500); // Reduced sleep time
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 break;
@@ -331,18 +393,46 @@ public class SkierConsumer {
             channel.basicCancel(consumerTag);
             channel.close();
         } catch (Exception e) {
-            // Minimal error logging
+            // Minimal error handling
         }
     }
 
     private static void processLiftRide(LiftRideEvent liftRide) {
         try {
+            // Faster deduplication with ConcurrentHashMap
+            // Create a key for deduplication
+            String dedupeKey = liftRide.getSkierId() + ":" + liftRide.getDayId() + ":" +
+                    liftRide.getLiftId() + ":" + liftRide.getTime();
+
+            // Check if we've recently processed this exact event (within last minute)
+            Long lastSeen = recentWrites.get(dedupeKey);
+            long currentTime = System.currentTimeMillis();
+
+            if (lastSeen != null && (currentTime - lastSeen) < 60000) {
+                // Skip duplicate within the last minute
+                return;
+            }
+
+            // Update cache - use putIfAbsent for better concurrency
+            recentWrites.put(dedupeKey, currentTime);
+
+            // Cleanup old entries periodically (every ~1000 entries)
+            if (currentTime % 1000 == 0) {
+                cleanupOldEntries(currentTime);
+            }
+
             // Write to DynamoDB
             writeToDynamoDB(liftRide);
         } catch (Exception e) {
             dbWriteErrors.incrementAndGet();
             throw e; // Rethrow to be handled by the message consumer
         }
+    }
+
+    private static void cleanupOldEntries(long currentTime) {
+        // Remove entries older than 5 minutes to prevent memory bloat
+        recentWrites.entrySet().removeIf(entry ->
+                (currentTime - entry.getValue()) > 300000); // 5 minutes
     }
 
     private static void writeToDynamoDB(LiftRideEvent liftRide) {
@@ -378,31 +468,49 @@ public class SkierConsumer {
      */
     private static class BatchWriter {
         private static final int MAX_BATCH_SIZE = 25; // DynamoDB's max limit is 25 items per batch
-        private static final int FLUSH_INTERVAL_MS = 20; // Reduced from 50ms to 20ms
-        private static final int MAX_RETRY_ATTEMPTS = 2; // Reduced from 3 to 2
+        private static final int FLUSH_INTERVAL_MS = 5; // Reduced from 10ms to 5ms
+        private static final int MAX_RETRY_ATTEMPTS = 3; // Increased from 2 to 3
+        private static final int BATCH_WRITER_THREADS = 32; // Increased from 8 to 32
 
         private final Map<String, List<Map<String, AttributeValue>>> batchItems = new ConcurrentHashMap<>();
-        private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(4);
+        private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(BATCH_WRITER_THREADS);
         private final AtomicInteger pendingOperations = new AtomicInteger(0);
+        // For adaptive flushing
+        private final AtomicInteger backlogSize = new AtomicInteger(0);
 
         public void start() {
+            // Schedule fixed-rate flushing
             scheduler.scheduleAtFixedRate(this::flushAll, FLUSH_INTERVAL_MS, FLUSH_INTERVAL_MS, TimeUnit.MILLISECONDS);
+
+            // Schedule adaptive flushing based on backlog
+            scheduler.scheduleAtFixedRate(() -> {
+                int currentBacklog = backlogSize.get();
+                if (currentBacklog > 1000) {
+                    // Additional flush if backlog is high
+                    flushAll();
+                }
+            }, 50, 50, TimeUnit.MILLISECONDS);
         }
 
         public void shutdown() {
             scheduler.shutdown();
-            flushAll();
+            flushAll(); // Final flush
 
             try {
-                if (!scheduler.awaitTermination(5, TimeUnit.SECONDS)) {
+                // Wait longer for shutdown to complete
+                if (!scheduler.awaitTermination(10, TimeUnit.SECONDS)) {
                     scheduler.shutdownNow();
                 }
 
                 // Wait for pending operations to complete
                 int attempts = 0;
-                while (pendingOperations.get() > 0 && attempts < 10) {
-                    Thread.sleep(1000);
+                while (pendingOperations.get() > 0 && attempts < 20) {
+                    Thread.sleep(500);
                     attempts++;
+                    // Force a flush every few attempts
+                    if (attempts % 5 == 0) {
+                        flushAll();
+                    }
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -410,27 +518,28 @@ public class SkierConsumer {
         }
 
         public void addItem(String tableName, Map<String, AttributeValue> item) {
-            List<Map<String, AttributeValue>> items = batchItems.computeIfAbsent(tableName, k -> new ArrayList<>());
+            List<Map<String, AttributeValue>> items = batchItems.computeIfAbsent(tableName, k ->
+                    Collections.synchronizedList(new ArrayList<>()));
 
-            synchronized(items) {
-                items.add(item);
+            items.add(item);
+            backlogSize.incrementAndGet();
 
-                // If batch size reaches the limit, flush this table's batch
-                if (items.size() >= MAX_BATCH_SIZE) {
-                    flush(tableName);
-                }
+            // If batch size reaches the limit, trigger async flush
+            if (items.size() >= MAX_BATCH_SIZE) {
+                scheduler.execute(() -> flush(tableName));
             }
         }
 
         public void flushAll() {
-            for (String tableName : new HashSet<>(batchItems.keySet())) {
+            Set<String> tableNames = new HashSet<>(batchItems.keySet());
+            for (String tableName : tableNames) {
                 flush(tableName);
             }
         }
 
         private void flush(String tableName) {
             List<Map<String, AttributeValue>> items = batchItems.get(tableName);
-            if (items == null) {
+            if (items == null || items.isEmpty()) {
                 return;
             }
 
@@ -440,13 +549,25 @@ public class SkierConsumer {
                     return;
                 }
 
-                // Create a copy of items to send
-                itemsToSend = new ArrayList<>(items);
-                items.clear();
+                // Take up to MAX_BATCH_SIZE items
+                int batchSize = Math.min(items.size(), MAX_BATCH_SIZE);
+                itemsToSend = new ArrayList<>(batchSize);
+
+                // Use iterator for more efficient removal
+                Iterator<Map<String, AttributeValue>> iterator = items.iterator();
+                for (int i = 0; i < batchSize && iterator.hasNext(); i++) {
+                    itemsToSend.add(iterator.next());
+                    iterator.remove();
+                    backlogSize.decrementAndGet();
+                }
+            }
+
+            if (itemsToSend.isEmpty()) {
+                return;
             }
 
             // Create write requests for each item
-            List<WriteRequest> writeRequests = new ArrayList<>();
+            List<WriteRequest> writeRequests = new ArrayList<>(itemsToSend.size());
             for (Map<String, AttributeValue> item : itemsToSend) {
                 writeRequests.add(WriteRequest.builder()
                         .putRequest(PutRequest.builder().item(item).build())
@@ -464,23 +585,36 @@ public class SkierConsumer {
             // Track this operation
             pendingOperations.incrementAndGet();
 
-            // Use sync client for more reliable operation
-            try {
-                BatchWriteItemResponse response = dynamoDbClient.batchWriteItem(batchWriteItemRequest);
+            // Use async client for better throughput
+            dynamoDbAsyncClient.batchWriteItem(batchWriteItemRequest)
+                    .whenComplete((response, error) -> {
+                        try {
+                            if (error != null) {
+                                handleBatchWriteError(tableName, itemsToSend, error);
+                            } else if (response.hasUnprocessedItems() && !response.unprocessedItems().isEmpty()) {
+                                retryUnprocessedItems(response.unprocessedItems(), 0);
+                            }
+                        } finally {
+                            pendingOperations.decrementAndGet();
+                        }
+                    });
+        }
 
-                // Handle unprocessed items if any
-                if (response.hasUnprocessedItems() && !response.unprocessedItems().isEmpty()) {
-                    retryUnprocessedItems(response.unprocessedItems(), 0);
-                }
-            } catch (Exception e) {
-                dbWriteErrors.incrementAndGet();
+        private void handleBatchWriteError(String tableName, List<Map<String, AttributeValue>> items, Throwable error) {
+            dbWriteErrors.incrementAndGet();
 
-                // Add items back to the batch for retry on next flush
-                synchronized(items) {
-                    items.addAll(itemsToSend);
-                }
-            } finally {
-                pendingOperations.decrementAndGet();
+            // Only log every 100th error to reduce console spam
+            if (dbWriteErrors.get() % 100 == 1) {
+                System.err.println("Batch write error: " + error.getClass().getSimpleName());
+            }
+
+            // Add items back to the batch for retry
+            List<Map<String, AttributeValue>> tableItems = batchItems.computeIfAbsent(tableName,
+                    k -> Collections.synchronizedList(new ArrayList<>()));
+
+            synchronized(tableItems) {
+                tableItems.addAll(items);
+                backlogSize.addAndGet(items.size());
             }
         }
 
@@ -499,26 +633,53 @@ public class SkierConsumer {
 
             if (attempt >= MAX_RETRY_ATTEMPTS) {
                 dbWriteErrors.addAndGet(countUnprocessedItems(unprocessedItems));
+
+                // Add unprocessed items back to batch queue after max retries
+                for (Map.Entry<String, List<WriteRequest>> entry : unprocessedItems.entrySet()) {
+                    String tableName = entry.getKey();
+                    List<WriteRequest> requests = entry.getValue();
+
+                    List<Map<String, AttributeValue>> tableItems = batchItems.computeIfAbsent(tableName,
+                            k -> Collections.synchronizedList(new ArrayList<>()));
+
+                    synchronized(tableItems) {
+                        for (WriteRequest request : requests) {
+                            if (request.putRequest() != null) {
+                                tableItems.add(request.putRequest().item());
+                                backlogSize.incrementAndGet();
+                            }
+                        }
+                    }
+                }
                 return;
             }
 
             pendingOperations.incrementAndGet();
 
             try {
-                // Use synchronous call for retry with minimal delay
+                // Use exponential backoff for retries
+                int delay = (int) Math.pow(2, attempt);
+                Thread.sleep(delay);
+
+                // Use asynchronous call for retry
                 BatchWriteItemRequest retryRequest = BatchWriteItemRequest.builder()
                         .requestItems(unprocessedItems)
                         .build();
 
-                BatchWriteItemResponse response = dynamoDbClient.batchWriteItem(retryRequest);
-
-                // Check if we still have unprocessed items
-                if (response.hasUnprocessedItems() && !response.unprocessedItems().isEmpty()) {
-                    retryUnprocessedItems(response.unprocessedItems(), attempt + 1);
-                }
+                dynamoDbAsyncClient.batchWriteItem(retryRequest)
+                        .whenComplete((response, error) -> {
+                            try {
+                                if (error != null) {
+                                    dbWriteErrors.addAndGet(countUnprocessedItems(unprocessedItems));
+                                } else if (response.hasUnprocessedItems() && !response.unprocessedItems().isEmpty()) {
+                                    retryUnprocessedItems(response.unprocessedItems(), attempt + 1);
+                                }
+                            } finally {
+                                pendingOperations.decrementAndGet();
+                            }
+                        });
             } catch (Exception e) {
                 dbWriteErrors.addAndGet(countUnprocessedItems(unprocessedItems));
-            } finally {
                 pendingOperations.decrementAndGet();
             }
         }
@@ -528,7 +689,7 @@ public class SkierConsumer {
         ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
         final long startTime = System.currentTimeMillis();
 
-        // Report stats every 60 seconds instead of every 10 seconds
+        // Report stats every 30 seconds instead of every 60 seconds
         scheduler.scheduleAtFixedRate(() -> {
             long currentTime = System.currentTimeMillis();
             double elapsedSeconds = (currentTime - startTime) / 1000.0;
@@ -538,7 +699,7 @@ public class SkierConsumer {
 
             // Calculate recent throughput
             int previousCount = lastProcessedCount.getAndSet(totalMessages);
-            double recentThroughput = (totalMessages - previousCount) / 60.0; // 60 seconds
+            double recentThroughput = (totalMessages - previousCount) / 30.0; // 30 seconds
 
             // Calculate overall throughput
             double throughput = totalMessages / elapsedSeconds;
@@ -550,7 +711,7 @@ public class SkierConsumer {
                     " | DB Errors: " + dbErrors +
                     " | Pending: " + batchWriter.pendingOperations.get());
 
-        }, 60, 60, TimeUnit.SECONDS); // Only output every 60 seconds
+        }, 30, 30, TimeUnit.SECONDS); // Output every 30 seconds
 
         return scheduler;
     }
