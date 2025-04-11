@@ -24,9 +24,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class SkierConsumer {
     private static final String QUEUE_NAME = "lift_ride_queue";
-    private static final String RABBITMQ_HOST = "172.31.44.71";
+    private static final String RABBITMQ_HOST = "35.94.176.139";
     private static final String RMQusername = "admin";
-    private static final String RMQpswd = "admin";
+    private static final String RMQpswd = "rmq";
 
     // Optimized thread count - can be adjusted based on CPU cores
     private static final int NUM_THREADS = 1024; // Increased from 512

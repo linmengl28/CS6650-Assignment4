@@ -10,7 +10,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 public class SkierClient {
     // Server configuration
-    private static final String BASE_URL = "http://54.69.130.34:8080/SkierServlet-1.0-SNAPSHOT";
+    private static final String BASE_URL = "http://44.246.124.251:8080/SkierServlet-1.0-SNAPSHOT";
 //    private static final String BASE_URL = "http://SkierServletLB-1807112057.us-west-2.elb.amazonaws.com/SkierServlet-1.0-SNAPSHOT";
     // Request configuration
     private static final int TOTAL_REQUESTS = 200000;

@@ -1,0 +1,14 @@
+# Ignore JAR files
+*.jar
+
+# Ignore shell scripts
+*.sh
+
+# Ignore target directory (contains build artifacts)
+target/
+
+.idea
+*/target/
+*.class
+*.ds_store
+*.csv
