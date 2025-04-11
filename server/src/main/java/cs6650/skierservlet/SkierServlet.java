@@ -1,6 +1,13 @@
 package cs6650.skierservlet;
 
 import com.google.gson.Gson;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
+import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
+import software.amazon.awssdk.services.dynamodb.model.DynamoDbException;
+import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
+import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
+
 import javax.servlet.ServletException;
 import javax.servlet.annotation.WebServlet;
 import javax.servlet.http.HttpServlet;
@@ -10,7 +17,9 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.regex.Pattern;
 import java.util.regex.Matcher;
@@ -19,6 +28,9 @@ import java.util.regex.Matcher;
 public class SkierServlet extends HttpServlet {
     private final Gson gson = new Gson();
     private MessageQueueService messageQueueService;
+    private DynamoDbClient dynamoDbClient;
+    private static final String SKIER_RIDES_TABLE = "SkierRides";
+    private static final Region AWS_REGION = Region.US_WEST_2;
 
     // URL validation pattern for post - matches /skiers/{resortID}/seasons/{seasonID}/days/{dayID}/skiers/{skierID}
     private static final Pattern SKIER_URL_PATTERN =
@@ -35,10 +47,16 @@ public class SkierServlet extends HttpServlet {
             // Initialize the message queue service - single responsibility
             messageQueueService = new RabbitMQService();
             messageQueueService.initialize();
+
+            dynamoDbClient = DynamoDbClient.builder()
+                    .region(AWS_REGION)
+                    .build();
+
+            System.out.println("DynamoDB client initialized successfully");
         } catch (Exception e) {
-            System.err.println("Failed to initialize message queue service: " + e.getMessage());
+            System.err.println("Failed to initialize services: " + e.getMessage());
             e.printStackTrace();
-            throw new ServletException("Failed to initialize message queue service", e);
+            throw new ServletException("Failed to initialize services", e);
         }
     }
     @Override
@@ -106,36 +124,134 @@ public class SkierServlet extends HttpServlet {
         }
     }
 
+    // skiers/{resortID}/seasons/{seasonID}/days/{dayID}/skiers/{skierID}
     // Get vertical for a skier on a specific day
     private int getSkierDayVertical(int skierID, int resortID, String seasonID, int dayID) {
-        // TODO: Implement actual database query to DynamoDB
-        // For now, return mock data
-        return 12345; // Mock vertical feet
+        Map<String, AttributeValue> expressionValues = new HashMap<>();
+        expressionValues.put(":skierId", AttributeValue.builder().n(String.valueOf(skierID)).build());
+        expressionValues.put(":dayId", AttributeValue.builder().n(String.valueOf(dayID)).build());
+        expressionValues.put(":resortId", AttributeValue.builder().n(String.valueOf(resortID)).build());
+        expressionValues.put(":seasonId", AttributeValue.builder().s(seasonID).build());
+
+        // Use skier-day-index
+        QueryRequest queryRequest = QueryRequest.builder()
+                .tableName(SKIER_RIDES_TABLE)
+                .indexName("skier-day-index")
+                .keyConditionExpression("skierId = :skierId AND dayId = :dayId")
+                .filterExpression("resortId = :resortId AND seasonId = :seasonId")
+                .expressionAttributeValues(expressionValues)
+                .build();
+        int totalVertical = 0;
+        try{
+            QueryResponse response = dynamoDbClient.query(queryRequest);
+            for (Map<String, AttributeValue> item : response.items()) {
+                if (item.containsKey("vertical")) {
+                    totalVertical += Integer.parseInt(item.get("vertical").n());
+                }
+            }
+            Map<String, AttributeValue> lastEvaluatedKey = response.lastEvaluatedKey();
+            while (lastEvaluatedKey != null && !lastEvaluatedKey.isEmpty()) {
+                queryRequest = queryRequest.toBuilder()
+                        .exclusiveStartKey(lastEvaluatedKey)
+                        .build();
+
+                response = dynamoDbClient.query(queryRequest);
+                for (Map<String, AttributeValue> item : response.items()) {
+                    if (item.containsKey("vertical")) {
+                        totalVertical += Integer.parseInt(item.get("vertical").n());
+                    }
+                }
+
+                lastEvaluatedKey = response.lastEvaluatedKey();
+            }
+            return totalVertical;
+        } catch (DynamoDbException e){
+            System.err.println("Error querying DynamoDB: " + e.getMessage());
+            e.printStackTrace();
+            return 0;
+        }
+
     }
 
     // Get vertical data for a skier across multiple seasons
+    // /skiers/{skierID}/vertical
+    // get the total vertical for the skier the specified resort. If no season is specified, return all seasons
     private VerticalData getSkierVertical(int skierID, String resortParam, String seasonParam) {
-        // TODO: Implement actual database query to DynamoDB
-        // For now, return mock data
         VerticalData data = new VerticalData();
         data.setSkierID(skierID);
 
-        // Add some mock resort data
-        ResortVertical resort1 = new ResortVertical();
-        resort1.setResortID(1);
-        resort1.setTotalVert(42000);
+        Map<String, AttributeValue> expressionValues = new HashMap<>();
+        expressionValues.put(":skierId", AttributeValue.builder().n(String.valueOf(skierID)).build());
+        QueryRequest.Builder queryBuilder = QueryRequest.builder()
+                .tableName(SKIER_RIDES_TABLE)
+                .keyConditionExpression("skierId = :skierId")
+                .expressionAttributeValues(expressionValues);
 
-        ResortVertical resort2 = new ResortVertical();
-        resort2.setResortID(2);
-        resort2.setTotalVert(36000);
+        StringBuilder filterExpression = new StringBuilder();
 
-        data.addResort(resort1);
-        data.addResort(resort2);
+        if (resortParam != null && !resortParam.isEmpty()) {
+            expressionValues.put(":resortId", AttributeValue.builder().n(resortParam).build());
+            filterExpression.append("resortId = :resortId");
+        }
 
-        return data;
+        if (seasonParam != null && !seasonParam.isEmpty()) {
+            if (filterExpression.length() > 0) {
+                filterExpression.append(" AND ");
+            }
+            expressionValues.put(":seasonId", AttributeValue.builder().s(seasonParam).build());
+            filterExpression.append("seasonId = :seasonId");
+        }
+
+        if (filterExpression.length() > 0) {
+            queryBuilder.filterExpression(filterExpression.toString());
+        }
+
+        QueryRequest queryRequest = queryBuilder.build();
+
+        try{
+            Map<Integer, Integer> resortVerticalMap = new HashMap<>();
+            QueryResponse response = dynamoDbClient.query(queryRequest);
+            processSkierVerticalResults(response.items(), resortVerticalMap);
+            Map<String, AttributeValue> lastEvaluatedKey = response.lastEvaluatedKey();
+            while (lastEvaluatedKey != null && !lastEvaluatedKey.isEmpty()) {
+                queryRequest = queryRequest.toBuilder()
+                        .exclusiveStartKey(lastEvaluatedKey)
+                        .build();
+
+                response = dynamoDbClient.query(queryRequest);
+                processSkierVerticalResults(response.items(), resortVerticalMap);
+
+                lastEvaluatedKey = response.lastEvaluatedKey();
+            }
+                for (Map.Entry<Integer, Integer> entry : resortVerticalMap.entrySet()) {
+                    ResortVertical resort = new ResortVertical();
+                    resort.setResortID(entry.getKey());
+                    resort.setTotalVert(entry.getValue());
+                    data.addResort(resort);
+                }
+
+                return data;
+        } catch (DynamoDbException e){
+            System.err.println("Error querying DynamoDB: " + e.getMessage());
+            e.printStackTrace();
+            return data;
+        }
     }
 
+
     // Helper classes for vertical data
+    private void processSkierVerticalResults(List<Map<String, AttributeValue>> items,
+                                             Map<Integer, Integer> resortVerticalMap) {
+        for (Map<String, AttributeValue> item : items) {
+            if (item.containsKey("resortId") && item.containsKey("vertical")) {
+                int resortId = Integer.parseInt(item.get("resortId").n());
+                int vertical = Integer.parseInt(item.get("vertical").n());
+                // update total vertical distance
+                resortVerticalMap.merge(resortId, vertical, Integer::sum);
+            }
+        }
+    }
+
     private static class VerticalData {
         private int skierID;
         private List<ResortVertical> resorts = new ArrayList<>();
@@ -143,12 +259,12 @@ public class SkierServlet extends HttpServlet {
         public void setSkierID(int skierID) {
             this.skierID = skierID;
         }
-
+        public int getSkierID() {return skierID;}
         public void addResort(ResortVertical resort) {
             resorts.add(resort);
         }
+        public List<ResortVertical> getResorts() {return resorts;}
 
-        // Getters omitted for brevity
     }
 
     private static class ResortVertical {
@@ -158,12 +274,12 @@ public class SkierServlet extends HttpServlet {
         public void setResortID(int resortID) {
             this.resortID = resortID;
         }
-
+        public int getResortID() {return resortID;}
         public void setTotalVert(int totalVert) {
             this.totalVert = totalVert;
         }
+        public int getTotalVert() {return totalVert;}
 
-        // Getters omitted for brevity
     }
     @Override
     protected void doPost(HttpServletRequest req, HttpServletResponse res)
@@ -257,6 +373,9 @@ public class SkierServlet extends HttpServlet {
         // Clean up resources
         if (messageQueueService != null) {
             messageQueueService.shutdown();
+        }
+        if (dynamoDbClient != null) {
+            dynamoDbClient.close();
         }
         super.destroy();
     }

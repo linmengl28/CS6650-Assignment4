@@ -1,4 +1,4 @@
-# CS6650-Assignment3
+# CS6650-Assignment4
 # DynamoDB Design for Skier Ride Data Processing
 
 ## Database Selection Rationale
@@ -102,3 +102,36 @@ The `SkierRides` table stores information about individual lift rides taken by s
 - **Write Efficiency**: Combined flush interval of 100ms with maximum batch size
 - **GSI Scaling**: Matched GSI write capacity to base table (2000 WCU)
 - **HTTP Client Tuning**: MaxConcurrency=250, ConnectionTimeout=5s
+
+## Test API
+### API Usage
+**GET/resorts/{resortID}/seasons/{seasonID}/day/{dayID}/skiers**
+get number of unique skiers at resort/season/day
+```bash
+http://[your-server-address]:8080/SkierServlet-1.0-SNAPSHOT/resorts/1/seasons/2025/day/1/skiers
+
+http://44.246.124.251:8080/SkierServlet-1.0-SNAPSHOT/resorts/1/seasons/2025/day/1/skiers
+or
+curl -X GET "http://44.246.124.251:8080/SkierServlet-1.0-SNAPSHOT/resorts/1/seasons/2025/day/1/skiers" -H "Accept: application/json"
+
+```
+
+**GET/skiers/{resortID}/seasons/{seasonID}/days/{dayID}/skiers/{skierID}**
+get the total vertical for the skier for the specified ski day
+```bash
+http://[your-server-address]:8080/SkierServlet-1.0-SNAPSHOT/skiers/1/seasons/2025/days/1/skiers/2
+
+http://44.246.124.251:8080/SkierServlet-1.0-SNAPSHOT/skiers/1/seasons/2025/days/1/skiers/2
+```
+
+**GET/skiers/{skierID}/vertical**
+get the total vertical for the skier the specified resort. If no season is specified, return all seasons
+```bash
+http://[your-server-address]:8080/SkierServlet-1.0-SNAPSHOT/skiers/2/vertical
+http://44.246.124.251:8080/SkierServlet-1.0-SNAPSHOT/skiers/2/vertical
+```
+### Screenshot
+![api-00-dynamoDB-with-skierID2.png](util/api-00-dynamoDB-with-skierID2.png)
+![api-01-getUniqueSkiersNum.png](util/api-01-getUniqueSkiersNum.png)
+![api-02-getSkierDayVertical.png](util/api-02-getSkierDayVertical.png)
+![api-03-getSkierTotalVertical.png](util/api-03-getSkierTotalVertical.png)
