@@ -11,4 +11,4 @@ target/
 */target/
 *.class
 *.ds_store
-*.csv
+*.csv**/target/
