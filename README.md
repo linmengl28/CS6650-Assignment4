@@ -68,9 +68,9 @@ The `SkierRides` table stores information about individual lift rides taken by s
 {
   "skierId": 101,
   "sortKey": "2022#34#7#157832",
-  "resortId": 55,
-  "seasonId": "2022",
-  "dayId": 34,
+  "resortId": 1,
+  "seasonId": "2025",
+  "dayId": 1,
   "liftId": 7,
   "time": 157832,
   "vertical": 70
@@ -135,3 +135,75 @@ http://44.246.124.251:8080/SkierServlet-1.0-SNAPSHOT/skiers/2/vertical
 ![api-01-getUniqueSkiersNum.png](util/api-01-getUniqueSkiersNum.png)
 ![api-02-getSkierDayVertical.png](util/api-02-getSkierDayVertical.png)
 ![api-03-getSkierTotalVertical.png](util/api-03-getSkierTotalVertical.png)
+
+## Deployment instruction
+### Download Tomcat on Server (AMZ Linux 2023 t3.medium)
+### Redis Config
+#### Amazon Linux 2023 Initial Setup
+```bash
+bash# Update the system
+sudo dnf update -y
+```
+
+#### Redis Installation 
+```bash
+bash# Install Redis
+sudo dnf install redis6 -y
+
+#Start Redis and enable on boot
+sudo systemctl start redis6
+sudo systemctl enable redis6
+
+#Verify Redis is running
+sudo systemctl status redis6
+```
+
+#### Redis Configuration
+Edit the Redis configuration file:
+```bash
+bashsudo nano /etc/redis6.conf
+```
+Add or modify the following settings based on your instance type:
+For t3.medium (4GB RAM):
+```bash
+#Memory configuration
+maxmemory 2gb
+maxmemory-policy allkeys-lru
+
+#Performance settings
+save ""
+appendonly no
+bind 127.0.0.1
+tcp-backlog 511
+io-threads 2
+timeout 300
+tcp-keepalive 60
+
+#Logging (reduce disk I/O)
+loglevel notice
+logfile ""
+
+# After making changes, restart Redis:
+bashsudo systemctl restart redis6
+
+# Verify your configuration:
+bashredis6-cli config get maxmemory
+redis6-cli config get maxmemory-policy
+```
+
+### Deploy Servlet on Server EC2
+```bash
+sudo scp -i 【yourpem】.pem SkierServlet-1.0-SNAPSHOT.war ec2-user@【ec2 public IP】:/usr/share/tomcat/webapps
+```
+
+### Deploy SkierConsumer on Consumer EC2
+```bash
+sudo scp -i 【yourpem】.pem Consumer-1.0-SNAPSHOT.jar ec2-user@【ec2 public IP】:~/
+```
+On Consumer EC2 run:
+```bash
+java -jar Consumer-1.0-SNAPSHOT.jar
+```
+wait for "create dynamodb table success", then run your client to make post requests. Make sure Server, RabbitMQ, Consumer EC2 are all running. 
+
+```
