@@ -182,7 +182,8 @@ tcp-keepalive 60
 #Logging (reduce disk I/O)
 loglevel notice
 logfile ""
-
+```
+```bash
 # After making changes, restart Redis:
 bashsudo systemctl restart redis6
 
@@ -205,5 +206,4 @@ On Consumer EC2 run:
 java -jar Consumer-1.0-SNAPSHOT.jar
 ```
 wait for "create dynamodb table success", then run your client to make post requests. Make sure Server, RabbitMQ, Consumer EC2 are all running. 
-
 ```
