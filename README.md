@@ -137,6 +137,7 @@ http://44.246.124.251:8080/SkierServlet-1.0-SNAPSHOT/skiers/2/vertical
 ![api-03-getSkierTotalVertical.png](util/api-03-getSkierTotalVertical.png)
 
 ## Deployment instruction
+### ❗️Please Set IAM ROLE "LABINSTANCEPROFILE" for Server and Consumer instances
 ### Download Tomcat on Server (AMZ Linux 2023 t3.medium) 
 see more detail at https://techviewleo.com/install-tomcat-on-amazon-linux/ 
 ### Download Redis
