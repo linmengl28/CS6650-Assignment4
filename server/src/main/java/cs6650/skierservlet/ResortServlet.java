@@ -28,6 +28,7 @@ import java.util.regex.Matcher;
 public class ResortServlet extends HttpServlet {
     private final Gson gson = new Gson();
     private DynamoDbClient dynamoDbClient;
+    private RedisService redisService; // New Redis service
     private static final String SKIER_RIDES_TABLE = "SkierRides";
     private static final Region AWS_REGION = Region.US_WEST_2;
 
@@ -36,8 +37,14 @@ public class ResortServlet extends HttpServlet {
         super.init();
         System.out.println("ResortServlet initializing");
         try{
+            // Initialize DynamoDB client
             dynamoDbClient = DynamoDbClient.builder().region(AWS_REGION).build();
             System.out.println("DynamoDB client initialized successfully");
+
+            // Initialize Redis service
+            redisService = new RedisService();
+            redisService.initialize();
+
         } catch (Exception e) {
             System.err.println("Error initializing ResortServlet: " + e.getMessage());
             e.printStackTrace();
@@ -92,7 +99,18 @@ public class ResortServlet extends HttpServlet {
     // /resorts/{resortID}/seasons/{seasonID}/day/{dayID}/skiers
     // get number of unique skiers at resort/season/day
     private int getUniqueSkiersCount(int resortID, String seasonID, int dayID) {
-        // TODO: Implement actual database query to DynamoDB
+        // Check Redis cache first
+        String cacheKey = redisService.generateUniqueSkiersKey(resortID, seasonID, dayID);
+        Integer cachedValue = redisService.getInt(cacheKey);
+
+        if (cachedValue != null) {
+            System.out.println("Cache hit for " + cacheKey);
+            return cachedValue;
+        }
+
+        System.out.println("Cache miss for " + cacheKey + ", querying DynamoDB");
+
+        // If not in cache, query DynamoDB
         Map<String, AttributeValue> expressionValues = new HashMap<>();
         expressionValues.put(":resortId", AttributeValue.builder().n(String.valueOf(resortID)).build());
         expressionValues.put(":dayId", AttributeValue.builder().n(String.valueOf(dayID)).build());
@@ -105,6 +123,7 @@ public class ResortServlet extends HttpServlet {
                 .filterExpression("seasonId = :seasonId")
                 .expressionAttributeValues(expressionValues)
                 .build();
+
         Set<String> uniqueSkiers = new HashSet<>();
         try {
             QueryResponse response = dynamoDbClient.query(queryRequest);
@@ -131,7 +150,12 @@ public class ResortServlet extends HttpServlet {
                 lastEvaluatedKey = response.lastEvaluatedKey();
             }
 
-            return uniqueSkiers.size();
+            int count = uniqueSkiers.size();
+
+            // Cache the result
+            redisService.setInt(cacheKey, count);
+//            redisService.setUniqueSkierCount(cacheKey, count);
+            return count;
         } catch (DynamoDbException e) {
             System.err.println("Error querying DynamoDB: " + e.getMessage());
             e.printStackTrace();
@@ -150,8 +174,9 @@ public class ResortServlet extends HttpServlet {
         if (dynamoDbClient != null) {
             dynamoDbClient.close();
         }
-
+        if (redisService != null) {
+            redisService.shutdown();
+        }
         super.destroy();
     }
-
 }

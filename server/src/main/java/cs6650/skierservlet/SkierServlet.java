@@ -29,6 +29,7 @@ public class SkierServlet extends HttpServlet {
     private final Gson gson = new Gson();
     private MessageQueueService messageQueueService;
     private DynamoDbClient dynamoDbClient;
+    private RedisService redisService; // New Redis service
     private static final String SKIER_RIDES_TABLE = "SkierRides";
     private static final Region AWS_REGION = Region.US_WEST_2;
 
@@ -38,6 +39,7 @@ public class SkierServlet extends HttpServlet {
     // URL validation pattern for get
     private static final Pattern skierDayPattern = Pattern.compile("^/(\\d+)/seasons/([^/]+)/days/(\\d+)/skiers/(\\d+)$");
     private static final Pattern verticalPattern = Pattern.compile("^/(\\d+)/vertical$");
+
     @Override
     public void init() throws ServletException {
         super.init();
@@ -48,17 +50,23 @@ public class SkierServlet extends HttpServlet {
             messageQueueService = new RabbitMQService();
             messageQueueService.initialize();
 
+            // Initialize DynamoDB client
             dynamoDbClient = DynamoDbClient.builder()
                     .region(AWS_REGION)
                     .build();
-
             System.out.println("DynamoDB client initialized successfully");
+
+            // Initialize Redis service
+            redisService = new RedisService();
+            redisService.initialize();
+
         } catch (Exception e) {
             System.err.println("Failed to initialize services: " + e.getMessage());
             e.printStackTrace();
             throw new ServletException("Failed to initialize services", e);
         }
     }
+
     @Override
     protected void doGet(HttpServletRequest req, HttpServletResponse res)
             throws ServletException, IOException {
@@ -127,6 +135,18 @@ public class SkierServlet extends HttpServlet {
     // skiers/{resortID}/seasons/{seasonID}/days/{dayID}/skiers/{skierID}
     // Get vertical for a skier on a specific day
     private int getSkierDayVertical(int skierID, int resortID, String seasonID, int dayID) {
+        // Check Redis cache first
+        String cacheKey = redisService.generateSkierDayVerticalKey(skierID, resortID, seasonID, dayID);
+        Integer cachedValue = redisService.getInt(cacheKey);
+
+        if (cachedValue != null) {
+            System.out.println("Cache hit for " + cacheKey);
+            return cachedValue;
+        }
+
+        System.out.println("Cache miss for " + cacheKey + ", querying DynamoDB");
+
+        // If not in cache, query DynamoDB
         Map<String, AttributeValue> expressionValues = new HashMap<>();
         expressionValues.put(":skierId", AttributeValue.builder().n(String.valueOf(skierID)).build());
         expressionValues.put(":dayId", AttributeValue.builder().n(String.valueOf(dayID)).build());
@@ -141,6 +161,7 @@ public class SkierServlet extends HttpServlet {
                 .filterExpression("resortId = :resortId AND seasonId = :seasonId")
                 .expressionAttributeValues(expressionValues)
                 .build();
+
         int totalVertical = 0;
         try{
             QueryResponse response = dynamoDbClient.query(queryRequest);
@@ -164,19 +185,34 @@ public class SkierServlet extends HttpServlet {
 
                 lastEvaluatedKey = response.lastEvaluatedKey();
             }
+
+            // Cache the result
+            redisService.setInt(cacheKey, totalVertical);
+//            redisService.setVerticalData(cacheKey, String.valueOf(totalVertical));
             return totalVertical;
         } catch (DynamoDbException e){
             System.err.println("Error querying DynamoDB: " + e.getMessage());
             e.printStackTrace();
             return 0;
         }
-
     }
 
     // Get vertical data for a skier across multiple seasons
     // /skiers/{skierID}/vertical
     // get the total vertical for the skier the specified resort. If no season is specified, return all seasons
     private VerticalData getSkierVertical(int skierID, String resortParam, String seasonParam) {
+        // Check Redis cache first
+        String cacheKey = redisService.generateSkierVerticalKey(skierID, resortParam, seasonParam);
+        String cachedJson = redisService.get(cacheKey);
+
+        if (cachedJson != null) {
+            System.out.println("Cache hit for " + cacheKey);
+            return gson.fromJson(cachedJson, VerticalData.class);
+        }
+
+        System.out.println("Cache miss for " + cacheKey + ", querying DynamoDB");
+
+        // If not in cache, query DynamoDB
         VerticalData data = new VerticalData();
         data.setSkierID(skierID);
 
@@ -223,21 +259,25 @@ public class SkierServlet extends HttpServlet {
 
                 lastEvaluatedKey = response.lastEvaluatedKey();
             }
-                for (Map.Entry<Integer, Integer> entry : resortVerticalMap.entrySet()) {
-                    ResortVertical resort = new ResortVertical();
-                    resort.setResortID(entry.getKey());
-                    resort.setTotalVert(entry.getValue());
-                    data.addResort(resort);
-                }
 
-                return data;
+            for (Map.Entry<Integer, Integer> entry : resortVerticalMap.entrySet()) {
+                ResortVertical resort = new ResortVertical();
+                resort.setResortID(entry.getKey());
+                resort.setTotalVert(entry.getValue());
+                data.addResort(resort);
+            }
+
+            // Cache the result
+//            redisService.setVerticalData(cacheKey, gson.toJson(data));
+            redisService.set(cacheKey, gson.toJson(data));
+
+            return data;
         } catch (DynamoDbException e){
             System.err.println("Error querying DynamoDB: " + e.getMessage());
             e.printStackTrace();
             return data;
         }
     }
-
 
     // Helper classes for vertical data
     private void processSkierVerticalResults(List<Map<String, AttributeValue>> items,
@@ -264,7 +304,6 @@ public class SkierServlet extends HttpServlet {
             resorts.add(resort);
         }
         public List<ResortVertical> getResorts() {return resorts;}
-
     }
 
     private static class ResortVertical {
@@ -279,8 +318,8 @@ public class SkierServlet extends HttpServlet {
             this.totalVert = totalVert;
         }
         public int getTotalVert() {return totalVert;}
-
     }
+
     @Override
     protected void doPost(HttpServletRequest req, HttpServletResponse res)
             throws ServletException, IOException {
@@ -376,6 +415,9 @@ public class SkierServlet extends HttpServlet {
         }
         if (dynamoDbClient != null) {
             dynamoDbClient.close();
+        }
+        if (redisService != null) {
+            redisService.shutdown();
         }
         super.destroy();
     }

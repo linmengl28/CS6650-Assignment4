@@ -20,9 +20,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class SkierConsumer {
     private static final String QUEUE_NAME = "lift_ride_queue";
-    private static final String RABBITMQ_HOST = "35.94.176.139";
+    private static final String RABBITMQ_HOST = "172.31.44.71";
     private static final String RMQusername = "admin";
-    private static final String RMQpswd = "rmq";
+    private static final String RMQpswd = "admin";
 
     // Thread configuration
     private static final int NUM_CONSUMER_THREADS = 256;
@@ -283,7 +283,7 @@ public class SkierConsumer {
                         )
                         .billingMode(BillingMode.PROVISIONED)
                         .provisionedThroughput(ProvisionedThroughput.builder()
-                                .readCapacityUnits(50L)
+                                .readCapacityUnits(2000L)
                                 .writeCapacityUnits(5000L)
                                 .build())
                         // Add GSIs for the required query patterns
@@ -297,7 +297,7 @@ public class SkierConsumer {
                                         .projection(Projection.builder().projectionType(ProjectionType.INCLUDE)
                                                 .nonKeyAttributes("skierId", "seasonId").build())
                                         .provisionedThroughput(ProvisionedThroughput.builder()
-                                                .readCapacityUnits(50L)
+                                                .readCapacityUnits(2000L)
                                                 .writeCapacityUnits(2000L)
                                                 .build())
                                         .build(),
@@ -310,7 +310,7 @@ public class SkierConsumer {
                                         .projection(Projection.builder().projectionType(ProjectionType.INCLUDE)
                                                 .nonKeyAttributes("vertical", "liftId", "resortId", "seasonId").build())
                                         .provisionedThroughput(ProvisionedThroughput.builder()
-                                                .readCapacityUnits(50L)
+                                                .readCapacityUnits(2000L)
                                                 .writeCapacityUnits(2000L)
                                                 .build())
                                         .build()
@@ -400,7 +400,7 @@ public class SkierConsumer {
 
             } catch (Exception e) {
                 processingErrors.incrementAndGet();
-                System.err.println("Error in consumer thread " + threadId + ": " + e.getClass().getSimpleName());
+//                System.err.println("Error in consumer thread " + threadId + ": " + e.getClass().getSimpleName());
 
                 // If there was a problem with the channel, don't return it
                 if (channel != null && channel.isOpen()) {

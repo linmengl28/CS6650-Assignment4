@@ -56,13 +56,17 @@
             <version>5.17.0</version> <!-- Use the latest stable version -->
         </dependency>
         <!-- AWS SDK v2 Core -->
+<!--        <dependency>-->
+<!--            <groupId>software.amazon.awssdk</groupId>-->
+<!--            <artifactId>aws-sdk-java</artifactId>-->
+<!--            <version>2.20.162</version>-->
+<!--            <scope>compile</scope>-->
+<!--        </dependency>-->
         <dependency>
-            <groupId>software.amazon.awssdk</groupId>
-            <artifactId>aws-sdk-java</artifactId>
-            <version>2.20.162</version>
-            <scope>compile</scope>
+            <groupId>redis.clients</groupId>
+            <artifactId>jedis</artifactId>
+            <version>4.3.1</version>
         </dependency>
-
         <!-- AWS SDK v2 for DynamoDB -->
         <dependency>
             <groupId>software.amazon.awssdk</groupId>
@@ -71,21 +75,21 @@
         </dependency>
 
         <!-- AWS SDK v2 DynamoDB Enhanced Client (optional, for object mapping) -->
-        <dependency>
-            <groupId>software.amazon.awssdk</groupId>
-            <artifactId>dynamodb-enhanced</artifactId>
-            <version>2.20.162</version>
-        </dependency>
-        <dependency>
-            <groupId>software.amazon.awssdk</groupId>
-            <artifactId>apache-client</artifactId>
-            <version>2.20.65</version>
-        </dependency>
-        <dependency>
-            <groupId>software.amazon.awssdk</groupId>
-            <artifactId>netty-nio-client</artifactId>
-            <version>2.20.65</version>
-        </dependency>
+<!--        <dependency>-->
+<!--            <groupId>software.amazon.awssdk</groupId>-->
+<!--            <artifactId>dynamodb-enhanced</artifactId>-->
+<!--            <version>2.20.162</version>-->
+<!--        </dependency>-->
+<!--        <dependency>-->
+<!--            <groupId>software.amazon.awssdk</groupId>-->
+<!--            <artifactId>apache-client</artifactId>-->
+<!--            <version>2.20.65</version>-->
+<!--        </dependency>-->
+<!--        <dependency>-->
+<!--            <groupId>software.amazon.awssdk</groupId>-->
+<!--            <artifactId>netty-nio-client</artifactId>-->
+<!--            <version>2.20.65</version>-->
+<!--        </dependency>-->
 
 
 
