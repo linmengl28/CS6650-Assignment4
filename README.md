@@ -142,7 +142,7 @@ see more detail at https://techviewleo.com/install-tomcat-on-amazon-linux/
 ### Download Redis
 #### Amazon Linux 2023 Initial Setup
 ```bash
-bash# Update the system
+# Update the system
 sudo dnf update -y
 ```
 
