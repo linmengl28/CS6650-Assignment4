@@ -140,11 +140,11 @@ public class SkierServlet extends HttpServlet {
         Integer cachedValue = redisService.getInt(cacheKey);
 
         if (cachedValue != null) {
-            System.out.println("Cache hit for " + cacheKey);
+//            System.out.println("Cache hit for " + cacheKey);
             return cachedValue;
         }
 
-        System.out.println("Cache miss for " + cacheKey + ", querying DynamoDB");
+//        System.out.println("Cache miss for " + cacheKey + ", querying DynamoDB");
 
         // If not in cache, query DynamoDB
         Map<String, AttributeValue> expressionValues = new HashMap<>();
@@ -206,11 +206,11 @@ public class SkierServlet extends HttpServlet {
         String cachedJson = redisService.get(cacheKey);
 
         if (cachedJson != null) {
-            System.out.println("Cache hit for " + cacheKey);
+//            System.out.println("Cache hit for " + cacheKey);
             return gson.fromJson(cachedJson, VerticalData.class);
         }
 
-        System.out.println("Cache miss for " + cacheKey + ", querying DynamoDB");
+//        System.out.println("Cache miss for " + cacheKey + ", querying DynamoDB");
 
         // If not in cache, query DynamoDB
         VerticalData data = new VerticalData();

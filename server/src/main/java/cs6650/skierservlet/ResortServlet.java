@@ -104,11 +104,11 @@ public class ResortServlet extends HttpServlet {
         Integer cachedValue = redisService.getInt(cacheKey);
 
         if (cachedValue != null) {
-            System.out.println("Cache hit for " + cacheKey);
+//            System.out.println("Cache hit for " + cacheKey);
             return cachedValue;
         }
 
-        System.out.println("Cache miss for " + cacheKey + ", querying DynamoDB");
+//        System.out.println("Cache miss for " + cacheKey + ", querying DynamoDB");
 
         // If not in cache, query DynamoDB
         Map<String, AttributeValue> expressionValues = new HashMap<>();
