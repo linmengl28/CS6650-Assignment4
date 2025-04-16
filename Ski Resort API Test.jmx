@@ -8,7 +8,7 @@
     </TestPlan>
     <hashTree>
       <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="Ski Resort API Test">
-        <intProp name="ThreadGroup.num_threads">10</intProp>
+        <intProp name="ThreadGroup.num_threads">128</intProp>
         <intProp name="ThreadGroup.ramp_time">10</intProp>
         <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
         <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
@@ -37,7 +37,8 @@
         </RandomVariableConfig>
         <hashTree/>
         <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Get Skier Day Vertical">
-          <stringProp name="HTTPSampler.domain">GetLB-1162296945.us-west-2.elb.amazonaws.com</stringProp>
+          <stringProp name="HTTPSampler.domain">52.34.149.122</stringProp>
+          <stringProp name="HTTPSampler.port">8080</stringProp>
           <stringProp name="HTTPSampler.protocol">http</stringProp>
           <stringProp name="HTTPSampler.path">/SkierServlet-1.0-SNAPSHOT/skiers/1/seasons/2025/days/${dayId}/skiers/${skierId}</stringProp>
           <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
@@ -50,7 +51,8 @@
         </HTTPSamplerProxy>
         <hashTree/>
         <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Get Skier Vertical">
-          <stringProp name="HTTPSampler.domain">GetLB-1162296945.us-west-2.elb.amazonaws.com</stringProp>
+          <stringProp name="HTTPSampler.domain">52.34.149.122</stringProp>
+          <stringProp name="HTTPSampler.port">8080</stringProp>
           <stringProp name="HTTPSampler.protocol">http</stringProp>
           <stringProp name="HTTPSampler.path">/SkierServlet-1.0-SNAPSHOT/skiers/${skierId}/vertical</stringProp>
           <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
@@ -63,7 +65,8 @@
         </HTTPSamplerProxy>
         <hashTree/>
         <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Get Resort Unique Skiers">
-          <stringProp name="HTTPSampler.domain">GetLB-1162296945.us-west-2.elb.amazonaws.com</stringProp>
+          <stringProp name="HTTPSampler.domain">52.34.149.122</stringProp>
+          <stringProp name="HTTPSampler.port">8080</stringProp>
           <stringProp name="HTTPSampler.protocol">http</stringProp>
           <stringProp name="HTTPSampler.path">/SkierServlet-1.0-SNAPSHOT/resorts/1/seasons/2025/day/${dayId}/skiers</stringProp>
           <boolProp name="HTTPSampler.follow_redirects">true</boolProp>

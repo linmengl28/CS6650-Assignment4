@@ -278,7 +278,6 @@ public class SkierConsumer {
                         .attributeDefinitions(
                                 AttributeDefinition.builder().attributeName("skierId").attributeType(ScalarAttributeType.N).build(),
                                 AttributeDefinition.builder().attributeName("sortKey").attributeType(ScalarAttributeType.S).build(),
-                                AttributeDefinition.builder().attributeName("resortId").attributeType(ScalarAttributeType.N).build(),
                                 AttributeDefinition.builder().attributeName("dayId").attributeType(ScalarAttributeType.N).build()
                         )
                         .billingMode(BillingMode.PROVISIONED)
@@ -286,29 +285,16 @@ public class SkierConsumer {
                                 .readCapacityUnits(2000L)
                                 .writeCapacityUnits(5000L)
                                 .build())
-                        // Add GSIs for the required query patterns
+                        // Simplified GSI structure with just one GSI for dayId-skierId queries
                         .globalSecondaryIndexes(
-                                // GSI for resort-season-day queries (to get unique skiers)
+                                // GSI for day-skier queries
                                 GlobalSecondaryIndex.builder()
-                                        .indexName("resort-day-index")
+                                        .indexName("day-skier-index")
                                         .keySchema(
-                                                KeySchemaElement.builder().attributeName("resortId").keyType(KeyType.HASH).build(),
-                                                KeySchemaElement.builder().attributeName("dayId").keyType(KeyType.RANGE).build())
+                                                KeySchemaElement.builder().attributeName("dayId").keyType(KeyType.HASH).build(),
+                                                KeySchemaElement.builder().attributeName("skierId").keyType(KeyType.RANGE).build())
                                         .projection(Projection.builder().projectionType(ProjectionType.INCLUDE)
-                                                .nonKeyAttributes("skierId", "seasonId").build())
-                                        .provisionedThroughput(ProvisionedThroughput.builder()
-                                                .readCapacityUnits(2000L)
-                                                .writeCapacityUnits(2000L)
-                                                .build())
-                                        .build(),
-                                // GSI for skier-day queries (vertical for day)
-                                GlobalSecondaryIndex.builder()
-                                        .indexName("skier-day-index")
-                                        .keySchema(
-                                                KeySchemaElement.builder().attributeName("skierId").keyType(KeyType.HASH).build(),
-                                                KeySchemaElement.builder().attributeName("dayId").keyType(KeyType.RANGE).build())
-                                        .projection(Projection.builder().projectionType(ProjectionType.INCLUDE)
-                                                .nonKeyAttributes("vertical", "liftId", "resortId", "seasonId").build())
+                                                .nonKeyAttributes("vertical", "liftId", "time").build())
                                         .provisionedThroughput(ProvisionedThroughput.builder()
                                                 .readCapacityUnits(2000L)
                                                 .writeCapacityUnits(2000L)
@@ -318,7 +304,7 @@ public class SkierConsumer {
                         .build();
 
                 dynamoDbClient.createTable(createSkierRidesTable);
-                System.out.println("Created " + SKIER_RIDES_TABLE + " table with provisioned capacity and GSIs");
+                System.out.println("Created " + SKIER_RIDES_TABLE + " table with provisioned capacity and optimized GSI for fixed resortId/seasonId");
 
                 // Wait for the table to be active
                 boolean tableActive = false;
@@ -514,15 +500,22 @@ public class SkierConsumer {
         int vertical = liftRide.getLiftId() * 10;
 
         // Create sortKey in format "seasonId#dayId#liftId#timestamp" for efficient querying
+        // Since seasonId is fixed, we can still include it in the sortKey for future-proofing
         String sortKey = liftRide.getSeasonId() + "#" + liftRide.getDayId() + "#" + liftRide.getLiftId() + "#" + liftRide.getTime();
 
         // Create a record for the SkierRides table
         Map<String, AttributeValue> skierRideItem = new HashMap<>();
         skierRideItem.put("skierId", AttributeValue.builder().n(String.valueOf(liftRide.getSkierId())).build());
         skierRideItem.put("sortKey", AttributeValue.builder().s(sortKey).build());
+
+        // Store fixed values (not part of the GSI keys but still stored as regular attributes)
         skierRideItem.put("resortId", AttributeValue.builder().n(String.valueOf(liftRide.getResortId())).build());
-        skierRideItem.put("seasonId", AttributeValue.builder().s(liftRide.getSeasonId()).build());  // Store as regular attribute
+        skierRideItem.put("seasonId", AttributeValue.builder().s(liftRide.getSeasonId()).build());
+
+        // Required for the day-skier-index GSI
         skierRideItem.put("dayId", AttributeValue.builder().n(String.valueOf(liftRide.getDayId())).build());
+
+        // Additional data attributes
         skierRideItem.put("liftId", AttributeValue.builder().n(String.valueOf(liftRide.getLiftId())).build());
         skierRideItem.put("time", AttributeValue.builder().n(String.valueOf(liftRide.getTime())).build());
         skierRideItem.put("vertical", AttributeValue.builder().n(String.valueOf(vertical)).build());

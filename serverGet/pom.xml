@@ -50,11 +50,11 @@
         </dependency>
 
             <!-- RabbitMQ Java Client -->
-        <dependency>
-            <groupId>com.rabbitmq</groupId>
-            <artifactId>amqp-client</artifactId>
-            <version>5.17.0</version> <!-- Use the latest stable version -->
-        </dependency>
+<!--        <dependency>-->
+<!--            <groupId>com.rabbitmq</groupId>-->
+<!--            <artifactId>amqp-client</artifactId>-->
+<!--            <version>5.17.0</version> &lt;!&ndash; Use the latest stable version &ndash;&gt;-->
+<!--        </dependency>-->
         <!-- AWS SDK v2 Core -->
 <!--        <dependency>-->
 <!--            <groupId>software.amazon.awssdk</groupId>-->

@@ -8,7 +8,6 @@ import software.amazon.awssdk.services.dynamodb.model.DynamoDbException;
 import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
 
-
 import javax.servlet.ServletException;
 import javax.servlet.annotation.WebServlet;
 import javax.servlet.http.HttpServlet;
@@ -17,7 +16,6 @@ import javax.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.util.HashMap;
-
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
@@ -28,7 +26,7 @@ import java.util.regex.Matcher;
 public class ResortServlet extends HttpServlet {
     private final Gson gson = new Gson();
     private DynamoDbClient dynamoDbClient;
-    private RedisService redisService; // New Redis service
+    private RedisService redisService; // Redis service
     private static final String SKIER_RIDES_TABLE = "SkierRides";
     private static final Region AWS_REGION = Region.US_WEST_2;
 
@@ -36,7 +34,7 @@ public class ResortServlet extends HttpServlet {
     public void init() throws ServletException {
         super.init();
         System.out.println("ResortServlet initializing");
-        try{
+        try {
             // Initialize DynamoDB client
             dynamoDbClient = DynamoDbClient.builder().region(AWS_REGION).build();
             System.out.println("DynamoDB client initialized successfully");
@@ -79,10 +77,13 @@ public class ResortServlet extends HttpServlet {
 
                 // Return the result
                 res.setStatus(HttpServletResponse.SC_OK);
-                out.println("{\"resortID\": " + resortID +
-                        ", \"seasonID\": \"" + seasonID +
-                        "\", \"dayID\": " + dayID +
-                        ", \"numSkiers\": " + numUniqueSkiers + "}");
+                res.setContentType("application/json");
+                HashMap<String,Object> responsedata = new HashMap<>();
+                responsedata.put("resortID", resortID);
+                responsedata.put("seasonID", seasonID);
+                responsedata.put("dayID", dayID);
+                responsedata.put("numUniqueSkiers", numUniqueSkiers);
+                gson.toJson(responsedata, res.getWriter());
             } else {
                 sendErrorResponse(res, HttpServletResponse.SC_BAD_REQUEST,
                         "Invalid URL format. Expected: /resorts/{resortID}/seasons/{seasonID}/day/{dayID}/skiers");
@@ -104,23 +105,22 @@ public class ResortServlet extends HttpServlet {
         Integer cachedValue = redisService.getInt(cacheKey);
 
         if (cachedValue != null) {
-//            System.out.println("Cache hit for " + cacheKey);
             return cachedValue;
         }
 
-//        System.out.println("Cache miss for " + cacheKey + ", querying DynamoDB");
-
-        // If not in cache, query DynamoDB
+        // If not in cache, query DynamoDB using day-skier-index
         Map<String, AttributeValue> expressionValues = new HashMap<>();
-        expressionValues.put(":resortId", AttributeValue.builder().n(String.valueOf(resortID)).build());
         expressionValues.put(":dayId", AttributeValue.builder().n(String.valueOf(dayID)).build());
+        // Add filter for fixed values
+        expressionValues.put(":resortId", AttributeValue.builder().n(String.valueOf(resortID)).build());
         expressionValues.put(":seasonId", AttributeValue.builder().s(seasonID).build());
 
+        // Query using dayId as hash key from the day-skier-index
         QueryRequest queryRequest = QueryRequest.builder()
                 .tableName(SKIER_RIDES_TABLE)
-                .indexName("resort-day-index")
-                .keyConditionExpression("resortId = :resortId AND dayId = :dayId")
-                .filterExpression("seasonId = :seasonId")
+                .indexName("day-skier-index")
+                .keyConditionExpression("dayId = :dayId")
+                .filterExpression("resortId = :resortId AND seasonId = :seasonId")
                 .expressionAttributeValues(expressionValues)
                 .build();
 
@@ -154,7 +154,6 @@ public class ResortServlet extends HttpServlet {
 
             // Cache the result
             redisService.setInt(cacheKey, count);
-//            redisService.setUniqueSkierCount(cacheKey, count);
             return count;
         } catch (DynamoDbException e) {
             System.err.println("Error querying DynamoDB: " + e.getMessage());
