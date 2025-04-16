@@ -101,8 +101,12 @@ public class SkierServlet extends HttpServlet {
                 // Handle GET for total vertical across specified seasons
                 int skierID = Integer.parseInt(verticalMatcher.group(1));
 
+                // Get optional query parameters
+                String resort = req.getParameter("resort");
+                String season = req.getParameter("season");
+
                 // Get the total vertical
-                VerticalData verticalData = getSkierVertical(skierID);
+                VerticalData verticalData = getSkierVertical(skierID, resort, season);
 
                 // Return the result
                 res.setStatus(HttpServletResponse.SC_OK);
@@ -147,8 +151,6 @@ public class SkierServlet extends HttpServlet {
                 .keyConditionExpression("dayId = :dayId AND skierId = :skierId")
                 .filterExpression("resortId = :resortId AND seasonId = :seasonId")
                 .expressionAttributeValues(expressionValues)
-                // Reduce response size with projection
-                .projectionExpression("vertical")
                 .build();
 
         int totalVertical = 0;
@@ -176,9 +178,8 @@ public class SkierServlet extends HttpServlet {
                 lastEvaluatedKey = response.lastEvaluatedKey();
             }
 
-            // Cache the result - Fixed: Added this missing cache update
+            // Cache the result
             redisService.setInt(cacheKey, totalVertical);
-
             return totalVertical;
         } catch (DynamoDbException e) {
             System.err.println("Error querying DynamoDB: " + e.getMessage());
@@ -187,41 +188,54 @@ public class SkierServlet extends HttpServlet {
         }
     }
 
-    // Get vertical data for a skier across all days
+    // Get vertical data for a skier across multiple seasons
     // /skiers/{skierID}/vertical
-    // get the total vertical for the skier with fixed resort and season values
-    private VerticalData getSkierVertical(int skierID) {
-        // Fixed: Using the proper method to generate the cache key
-        String cacheKey = redisService.generateSkierVerticalKey(skierID, null, null);
+    // get the total vertical for the skier the specified resort. If no season is specified, return all seasons
+    private VerticalData getSkierVertical(int skierID, String resortParam, String seasonParam) {
+        // Check Redis cache first
+        String cacheKey = redisService.generateSkierVerticalKey(skierID, resortParam, seasonParam);
         String cachedJson = redisService.get(cacheKey);
 
         if (cachedJson != null) {
             return gson.fromJson(cachedJson, VerticalData.class);
         }
 
-        // If not in cache, query DynamoDB
+        // If not in cache, query DynamoDB using the base table (not the GSI)
         VerticalData data = new VerticalData();
         data.setSkierID(skierID);
 
-        // Since we know resort and season are fixed, we can just query by skierId
         Map<String, AttributeValue> expressionValues = new HashMap<>();
         expressionValues.put(":skierId", AttributeValue.builder().n(String.valueOf(skierID)).build());
 
-        QueryRequest queryRequest = QueryRequest.builder()
+        // We query directly on the primary table since skierId is the hash key
+        QueryRequest.Builder queryBuilder = QueryRequest.builder()
                 .tableName(SKIER_RIDES_TABLE)
                 .keyConditionExpression("skierId = :skierId")
-                .expressionAttributeValues(expressionValues)
-                // Add projection to include only needed fields
-                .projectionExpression("resortId, vertical")
-                // Add a limit to reduce response time by processing in smaller batches
-                .limit(100)
-                .build();
+                .expressionAttributeValues(expressionValues);
+
+        StringBuilder filterExpression = new StringBuilder();
+
+        if (resortParam != null && !resortParam.isEmpty()) {
+            expressionValues.put(":resortId", AttributeValue.builder().n(resortParam).build());
+            filterExpression.append("resortId = :resortId");
+        }
+
+        if (seasonParam != null && !seasonParam.isEmpty()) {
+            if (filterExpression.length() > 0) {
+                filterExpression.append(" AND ");
+            }
+            expressionValues.put(":seasonId", AttributeValue.builder().s(seasonParam).build());
+            filterExpression.append("seasonId = :seasonId");
+        }
+
+        if (filterExpression.length() > 0) {
+            queryBuilder.filterExpression(filterExpression.toString());
+        }
+
+        QueryRequest queryRequest = queryBuilder.build();
 
         try {
-            // We maintain the resort map structure even though we have one fixed resort
-            // This maintains compatibility with the existing VerticalData class
             Map<Integer, Integer> resortVerticalMap = new HashMap<>();
-
             QueryResponse response = dynamoDbClient.query(queryRequest);
             processSkierVerticalResults(response.items(), resortVerticalMap);
 
@@ -237,7 +251,6 @@ public class SkierServlet extends HttpServlet {
                 lastEvaluatedKey = response.lastEvaluatedKey();
             }
 
-            // Convert the map to the expected format
             for (Map.Entry<Integer, Integer> entry : resortVerticalMap.entrySet()) {
                 ResortVertical resort = new ResortVertical();
                 resort.setResortID(entry.getKey());
@@ -245,8 +258,9 @@ public class SkierServlet extends HttpServlet {
                 data.addResort(resort);
             }
 
-            // Cache the result with the proper key
+            // Cache the result
             redisService.set(cacheKey, gson.toJson(data));
+
             return data;
         } catch (DynamoDbException e) {
             System.err.println("Error querying DynamoDB: " + e.getMessage());
@@ -255,11 +269,11 @@ public class SkierServlet extends HttpServlet {
         }
     }
 
-    // Fixed: Added proper null check for resortId
+    // Helper classes for vertical data
     private void processSkierVerticalResults(List<Map<String, AttributeValue>> items,
                                              Map<Integer, Integer> resortVerticalMap) {
         for (Map<String, AttributeValue> item : items) {
-            if (item.containsKey("vertical") && item.containsKey("resortId")) {
+            if (item.containsKey("resortId") && item.containsKey("vertical")) {
                 int resortId = Integer.parseInt(item.get("resortId").n());
                 int vertical = Integer.parseInt(item.get("vertical").n());
                 // update total vertical distance

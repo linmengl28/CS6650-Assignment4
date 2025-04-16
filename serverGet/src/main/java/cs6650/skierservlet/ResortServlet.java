@@ -77,13 +77,10 @@ public class ResortServlet extends HttpServlet {
 
                 // Return the result
                 res.setStatus(HttpServletResponse.SC_OK);
-                res.setContentType("application/json");
-                HashMap<String,Object> responsedata = new HashMap<>();
-                responsedata.put("resortID", resortID);
-                responsedata.put("seasonID", seasonID);
-                responsedata.put("dayID", dayID);
-                responsedata.put("numUniqueSkiers", numUniqueSkiers);
-                gson.toJson(responsedata, res.getWriter());
+                out.println("{\"resortID\": " + resortID +
+                        ", \"seasonID\": \"" + seasonID +
+                        "\", \"dayID\": " + dayID +
+                        ", \"numSkiers\": " + numUniqueSkiers + "}");
             } else {
                 sendErrorResponse(res, HttpServletResponse.SC_BAD_REQUEST,
                         "Invalid URL format. Expected: /resorts/{resortID}/seasons/{seasonID}/day/{dayID}/skiers");
