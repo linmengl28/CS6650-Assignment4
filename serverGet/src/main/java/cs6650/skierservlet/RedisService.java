@@ -11,12 +11,12 @@ public class RedisService {
     private static final String REDIS_HOST = System.getenv("REDIS_HOST") != null ?
             System.getenv("REDIS_HOST") : "localhost";
     private static final int REDIS_PORT = 6379;
-    private static final int CACHE_TTL = 120; // TTL in seconds for cache entries
+    private static final int CACHE_TTL = 300; // TTL in seconds for cache entries
 
     public void initialize() throws ServletException {
         try {
             JedisPoolConfig poolConfig = new JedisPoolConfig();
-            poolConfig.setMaxTotal(128); // Match your JMeter thread count
+            poolConfig.setMaxTotal(160); // More than  JMeter thread count
             poolConfig.setMaxIdle(32);
 
             // Create pool without authentication - fixes the error in your stack trace
