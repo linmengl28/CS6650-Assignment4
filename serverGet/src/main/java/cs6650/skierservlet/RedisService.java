@@ -16,7 +16,7 @@ public class RedisService {
     public void initialize() throws ServletException {
         try {
             JedisPoolConfig poolConfig = new JedisPoolConfig();
-            poolConfig.setMaxTotal(128); // Match your JMeter thread count
+            poolConfig.setMaxTotal(160); // Match your JMeter thread count
             poolConfig.setMaxIdle(32);
 
             // Create pool without authentication - fixes the error in your stack trace
