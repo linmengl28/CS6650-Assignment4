@@ -30,9 +30,6 @@ public class SkierServlet extends HttpServlet {
     private static final String SKIER_RIDES_TABLE = "SkierRides";
     private static final Region AWS_REGION = Region.US_WEST_2;
 
-    // URL validation pattern for post - matches /skiers/{resortID}/seasons/{seasonID}/days/{dayID}/skiers/{skierID}
-    private static final Pattern SKIER_URL_PATTERN =
-            Pattern.compile("^/(\\d+)/seasons/([^/]+)/days/(\\d+)/skiers/(\\d+)$");
     // URL validation pattern for get
     private static final Pattern skierDayPattern = Pattern.compile("^/(\\d+)/seasons/([^/]+)/days/(\\d+)/skiers/(\\d+)$");
     private static final Pattern verticalPattern = Pattern.compile("^/(\\d+)/vertical$");

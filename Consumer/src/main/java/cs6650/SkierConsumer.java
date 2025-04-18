@@ -386,8 +386,6 @@ public class SkierConsumer {
 
             } catch (Exception e) {
                 processingErrors.incrementAndGet();
-//                System.err.println("Error in consumer thread " + threadId + ": " + e.getClass().getSimpleName());
-
                 // If there was a problem with the channel, don't return it
                 if (channel != null && channel.isOpen()) {
                     try {
