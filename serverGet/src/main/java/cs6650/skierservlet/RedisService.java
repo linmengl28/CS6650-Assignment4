@@ -11,20 +11,17 @@ public class RedisService {
     private static final String REDIS_HOST = System.getenv("REDIS_HOST") != null ?
             System.getenv("REDIS_HOST") : "localhost";
     private static final int REDIS_PORT = 6379;
-    private static final int CACHE_TTL = 60; // TTL in seconds for cache entries
+    private static final int CACHE_TTL = 300; // TTL in seconds for cache entries
 
     public void initialize() throws ServletException {
         try {
             JedisPoolConfig poolConfig = new JedisPoolConfig();
-            poolConfig.setMaxTotal(128); // Match your JMeter thread count
+            poolConfig.setMaxTotal(160); // More than  JMeter thread count
             poolConfig.setMaxIdle(32);
 
-//            poolConfig.setTestOnBorrow(true);
-//            poolConfig.setTestWhileIdle(true);
-//            poolConfig.setMaxWaitMillis(1000); // 1 second timeout for connection
-//            poolConfig.setBlockWhenExhausted(false); // Don't block when pool is exhausted
+            // Create pool without authentication - fixes the error in your stack trace
             jedisPool = new JedisPool(poolConfig, REDIS_HOST, REDIS_PORT);
-            System.out.println("Redis connection pool initialized successfully");
+            System.out.println("Redis connection pool initialized successfully at " + REDIS_HOST);
         } catch (Exception e) {
             System.err.println("Failed to initialize Redis: " + e.getMessage());
             e.printStackTrace();
@@ -37,23 +34,7 @@ public class RedisService {
             jedisPool.close();
         }
     }
-    // For vertical data, which changes less frequently
-    public void setVerticalData(String key, String value) {
-        try (Jedis jedis = jedisPool.getResource()) {
-            jedis.setex(key, 300, value); // 5 minutes for vertical data
-        } catch (Exception e) {
-            System.err.println("Error setting in Redis: " + e.getMessage());
-        }
-    }
 
-    // For unique skier counts, which may change more frequently
-    public void setUniqueSkierCount(String key, int value) {
-        try (Jedis jedis = jedisPool.getResource()) {
-            jedis.setex(key, 60, String.valueOf(value)); // 1 minute
-        } catch (Exception e) {
-            System.err.println("Error setting in Redis: " + e.getMessage());
-        }
-    }
     // Cache key generation methods
     public String generateSkierDayVerticalKey(int skierID, int resortID, String seasonID, int dayID) {
         return String.format("skier:%d:resort:%d:season:%s:day:%d:vertical",
@@ -71,26 +52,13 @@ public class RedisService {
     }
 
     // String value getter/setter with TTL
-    // Add retry logic for Redis get operations
     public String get(String key) {
-        int maxRetries = 2;
-        for (int i = 0; i <= maxRetries; i++) {
-            try (Jedis jedis = jedisPool.getResource()) {
-                return jedis.get(key);
-            } catch (Exception e) {
-                if (i == maxRetries) {
-                    System.err.println("Error getting from Redis: " + e.getMessage());
-                    return null;
-                }
-                // Brief exponential backoff
-                try {
-                    Thread.sleep(50 * (long)Math.pow(2, i));
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                }
-            }
+        try (Jedis jedis = jedisPool.getResource()) {
+            return jedis.get(key);
+        } catch (Exception e) {
+            System.err.println("Error getting from Redis: " + e.getMessage());
+            return null;
         }
-        return null;
     }
 
     public void set(String key, String value) {

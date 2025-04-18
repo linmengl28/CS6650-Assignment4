@@ -13,23 +13,20 @@ import javax.servlet.annotation.WebServlet;
 import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
-import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
 import java.util.regex.Pattern;
 import java.util.regex.Matcher;
 
 @WebServlet(value = "/skiers/*", loadOnStartup = 1)
 public class SkierServlet extends HttpServlet {
     private final Gson gson = new Gson();
-//    private MessageQueueService messageQueueService;
     private DynamoDbClient dynamoDbClient;
-    private RedisService redisService; // New Redis service
+    private RedisService redisService; // Redis service
     private static final String SKIER_RIDES_TABLE = "SkierRides";
     private static final Region AWS_REGION = Region.US_WEST_2;
 
@@ -46,10 +43,6 @@ public class SkierServlet extends HttpServlet {
         System.out.println("SkierServlet initializing");
 
         try {
-            // Initialize the message queue service - single responsibility
-//            messageQueueService = new RabbitMQService();
-//            messageQueueService.initialize();
-
             // Initialize DynamoDB client
             dynamoDbClient = DynamoDbClient.builder()
                     .region(AWS_REGION)
@@ -140,36 +133,35 @@ public class SkierServlet extends HttpServlet {
         Integer cachedValue = redisService.getInt(cacheKey);
 
         if (cachedValue != null) {
-//            System.out.println("Cache hit for " + cacheKey);
             return cachedValue;
         }
 
-//        System.out.println("Cache miss for " + cacheKey + ", querying DynamoDB");
-
-        // If not in cache, query DynamoDB
+        // If not in cache, query DynamoDB using new day-skier-index
         Map<String, AttributeValue> expressionValues = new HashMap<>();
-        expressionValues.put(":skierId", AttributeValue.builder().n(String.valueOf(skierID)).build());
         expressionValues.put(":dayId", AttributeValue.builder().n(String.valueOf(dayID)).build());
+        expressionValues.put(":skierId", AttributeValue.builder().n(String.valueOf(skierID)).build());
+        // Add filter for the fixed values
         expressionValues.put(":resortId", AttributeValue.builder().n(String.valueOf(resortID)).build());
         expressionValues.put(":seasonId", AttributeValue.builder().s(seasonID).build());
 
-        // Use skier-day-index
+        // Use day-skier-index with appropriate filter
         QueryRequest queryRequest = QueryRequest.builder()
                 .tableName(SKIER_RIDES_TABLE)
-                .indexName("skier-day-index")
-                .keyConditionExpression("skierId = :skierId AND dayId = :dayId")
+                .indexName("day-skier-index")
+                .keyConditionExpression("dayId = :dayId AND skierId = :skierId")
                 .filterExpression("resortId = :resortId AND seasonId = :seasonId")
                 .expressionAttributeValues(expressionValues)
                 .build();
 
         int totalVertical = 0;
-        try{
+        try {
             QueryResponse response = dynamoDbClient.query(queryRequest);
             for (Map<String, AttributeValue> item : response.items()) {
                 if (item.containsKey("vertical")) {
                     totalVertical += Integer.parseInt(item.get("vertical").n());
                 }
             }
+
             Map<String, AttributeValue> lastEvaluatedKey = response.lastEvaluatedKey();
             while (lastEvaluatedKey != null && !lastEvaluatedKey.isEmpty()) {
                 queryRequest = queryRequest.toBuilder()
@@ -188,9 +180,8 @@ public class SkierServlet extends HttpServlet {
 
             // Cache the result
             redisService.setInt(cacheKey, totalVertical);
-//            redisService.setVerticalData(cacheKey, String.valueOf(totalVertical));
             return totalVertical;
-        } catch (DynamoDbException e){
+        } catch (DynamoDbException e) {
             System.err.println("Error querying DynamoDB: " + e.getMessage());
             e.printStackTrace();
             return 0;
@@ -206,18 +197,17 @@ public class SkierServlet extends HttpServlet {
         String cachedJson = redisService.get(cacheKey);
 
         if (cachedJson != null) {
-//            System.out.println("Cache hit for " + cacheKey);
             return gson.fromJson(cachedJson, VerticalData.class);
         }
 
-//        System.out.println("Cache miss for " + cacheKey + ", querying DynamoDB");
-
-        // If not in cache, query DynamoDB
+        // If not in cache, query DynamoDB using the base table (not the GSI)
         VerticalData data = new VerticalData();
         data.setSkierID(skierID);
 
         Map<String, AttributeValue> expressionValues = new HashMap<>();
         expressionValues.put(":skierId", AttributeValue.builder().n(String.valueOf(skierID)).build());
+
+        // We query directly on the primary table since skierId is the hash key
         QueryRequest.Builder queryBuilder = QueryRequest.builder()
                 .tableName(SKIER_RIDES_TABLE)
                 .keyConditionExpression("skierId = :skierId")
@@ -244,10 +234,11 @@ public class SkierServlet extends HttpServlet {
 
         QueryRequest queryRequest = queryBuilder.build();
 
-        try{
+        try {
             Map<Integer, Integer> resortVerticalMap = new HashMap<>();
             QueryResponse response = dynamoDbClient.query(queryRequest);
             processSkierVerticalResults(response.items(), resortVerticalMap);
+
             Map<String, AttributeValue> lastEvaluatedKey = response.lastEvaluatedKey();
             while (lastEvaluatedKey != null && !lastEvaluatedKey.isEmpty()) {
                 queryRequest = queryRequest.toBuilder()
@@ -268,11 +259,10 @@ public class SkierServlet extends HttpServlet {
             }
 
             // Cache the result
-//            redisService.setVerticalData(cacheKey, gson.toJson(data));
             redisService.set(cacheKey, gson.toJson(data));
 
             return data;
-        } catch (DynamoDbException e){
+        } catch (DynamoDbException e) {
             System.err.println("Error querying DynamoDB: " + e.getMessage());
             e.printStackTrace();
             return data;
@@ -337,9 +327,6 @@ public class SkierServlet extends HttpServlet {
     @Override
     public void destroy() {
         // Clean up resources
-//        if (messageQueueService != null) {
-//            messageQueueService.shutdown();
-//        }
         if (dynamoDbClient != null) {
             dynamoDbClient.close();
         }
@@ -347,19 +334,5 @@ public class SkierServlet extends HttpServlet {
             redisService.shutdown();
         }
         super.destroy();
-    }
-
-    // Inner class to parse the JSON request body (which only contains liftID and time)
-    private static class LiftRideRequest {
-        private int liftID;
-        private int time;
-
-        public int getLiftID() {
-            return liftID;
-        }
-
-        public int getTime() {
-            return time;
-        }
     }
 }
