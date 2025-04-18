@@ -46,40 +46,27 @@ The `SkierRides` table stores information about individual lift rides taken by s
 
 ## Global Secondary Indexes (GSIs)
 
-### 1. `resort-day-index`
+### 1. `day-skier-index`
 
-- **Purpose:** Query skiers who visited a specific resort on a given day.
-- **Partition Key:** `resortId` (Number)
-- **Sort Key:** `dayId` (Number)
-- **Projected Attributes:** `skierId`, `seasonId`
-
-### 2. `skier-day-index`
-
-- **Purpose:** Query lift rides for a skier on a specific day.
-- **Partition Key:** `skierId` (Number)
-- **Sort Key:** `dayId` (Number)
-- **Projected Attributes:** `vertical`, `liftId`, `resortId`, `seasonId`
+- **Partition Key:** `dayId` (Number)
+- **Sort Key:** `skierId` (Number)
 
 ---
 
-## Sample Item
-
-```json
-{
-  "skierId": 101,
-  "sortKey": "2022#34#7#157832",
-  "resortId": 1,
-  "seasonId": "2025",
-  "dayId": 1,
-  "liftId": 7,
-  "time": 157832,
-  "vertical": 70
-}
-```
 
 ## Deployment Topology
 
 ### Compute Resources
+- **Post Server**: Java Tomcat Web application running on EC2
+  - Instance Type: t2.micro
+  - Role: Accept post request, validate and send to RabbitMQ
+  - Concurrency: 8 threads
+
+- **Get Server**: Java Tomcat Web application running on EC2
+  - Instance Type: t3.large
+  - Role: Accept Get request, validate and query DynamoDB
+  - Contains Redis
+
 - **Consumer Application**: Java application running on EC2
   - Instance Type: c3.large
   - Role: Consumes messages from RabbitMQ, processes data, writes to DynamoDB
