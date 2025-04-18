@@ -65,7 +65,7 @@ The `SkierRides` table stores information about individual lift rides taken by s
 - **Get Server**: Java Tomcat Web application running on EC2
   - Instance Type: t3.large
   - Role: Accept Get request, validate and query DynamoDB
-  - Contains Redis
+  - Contains Redis: 128 thread pool, 120 Time-to-live
 
 - **Consumer Application**: Java application running on EC2
   - Instance Type: c3.large
@@ -122,6 +122,18 @@ http://44.246.124.251:8080/SkierServlet-1.0-SNAPSHOT/skiers/2/vertical
 ![api-01-getUniqueSkiersNum.png](util/api-01-getUniqueSkiersNum.png)
 ![api-02-getSkierDayVertical.png](util/api-02-getSkierDayVertical.png)
 ![api-03-getSkierTotalVertical.png](util/api-03-getSkierTotalVertical.png)
+
+### JMeter test
+#### With Redis
+![image](https://github.com/user-attachments/assets/4bf290a0-fece-454d-83cd-1f248ec18589)
+![image](https://github.com/user-attachments/assets/ee093479-5401-4d3c-9dd5-bf17b32b2ce1)
+
+#### Without Redis
+![image](https://github.com/user-attachments/assets/795d1889-4e11-4afb-b772-379b4cab5343)
+![image](https://github.com/user-attachments/assets/8d46707c-934c-4f1e-80a6-9691e3657151)
+
+
+#### w/ Redis
 
 ## Deployment instruction
 ### ❗️Please Set IAM ROLE "LABINSTANCEPROFILE" for Server and Consumer instances
