@@ -74,8 +74,8 @@ The `SkierRides` table stores information about individual lift rides taken by s
 
 ### Database Provisioning
 - **DynamoDB Table**: Provisioned capacity mode
-  - Base Table: 50 RCU, 5000 WCU
-  - GSIs: 20 RCU, 2000 WCU each
+  - Base Table: 2000 RCU, 5000 WCU
+  - GSIs: 2000 RCU, 2000 WCU each
   - Region: US-West-2 (Oregon)
 
 ### Message Queue
